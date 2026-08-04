@@ -13,6 +13,17 @@ import { DiscordPresenceClient } from './lib/discord-ipc.mjs';
 import { DEFAULT_PRIVACY, applyAgentStatus, applyWorktreeCreated, applyWorktreeRemoved, buildActivity, createPresenceState, deserializeState, describeActivity, isBusy, isPrivacyLevel, nextPrivacy, pruneStale, serializeState, summarize } from './lib/presence-model.mjs';
 const STORAGE_KEY = 'presence-state';
 const STORAGE_STARTED_AT_KEY = 'busy-since';
+/**
+ * Discord application backing the presence by default.
+ *
+ * Rich Presence application ids are public identifiers — they travel in every
+ * client's IPC traffic and grant nothing on their own. The sensitive half is
+ * the OAuth client secret, which Rich Presence never needs and this plugin
+ * never asks for. Shipping an id means the plugin works on install; set
+ * `clientId` in settings to publish under your own application instead (the
+ * application's name is what Discord shows as the "Playing …" line).
+ */
+export const DEFAULT_CLIENT_ID = '1534192299926360234';
 /** Coalesce bursts: a single agent transition can fan out several events. */
 const PUBLISH_DEBOUNCE_MS = 1_500;
 /** Discord throttles SET_ACTIVITY at roughly 5 calls / 15s; stay well under. */
@@ -57,7 +68,7 @@ class PresenceRuntime {
     #settings = {
         enabled: true,
         privacy: DEFAULT_PRIVACY,
-        clientId: '',
+        clientId: DEFAULT_CLIENT_ID,
         assets: { largeImage: '', largeText: '' }
     };
     #client = null;
@@ -99,7 +110,7 @@ class PresenceRuntime {
             this.#settings = {
                 enabled: stored['enabled'] !== false,
                 privacy: isPrivacyLevel(stored['privacy']) ? stored['privacy'] : DEFAULT_PRIVACY,
-                clientId: typeof stored['clientId'] === 'string' ? stored['clientId'].trim() : '',
+                clientId: readClientId(stored['clientId']),
                 assets: {
                     largeImage: typeof stored['largeImage'] === 'string' ? stored['largeImage'] : '',
                     largeText: typeof stored['largeText'] === 'string' ? stored['largeText'] : ''
@@ -325,6 +336,7 @@ class PresenceRuntime {
             privacy: this.#settings.privacy,
             connected: Boolean(this.#client?.connected),
             socketPath: this.#client?.socketPath ?? null,
+            usingDefaultApplication: this.#settings.clientId === DEFAULT_CLIENT_ID,
             summary,
             lastError: this.#lastError
         };
@@ -382,5 +394,12 @@ class PresenceRuntime {
 }
 function describeError(error) {
     return error instanceof Error ? error.message : String(error);
+}
+/** A configured id wins; anything blank or non-string falls back to the default. */
+function readClientId(configured) {
+    if (typeof configured === 'string' && configured.trim().length > 0) {
+        return configured.trim();
+    }
+    return DEFAULT_CLIENT_ID;
 }
 //# sourceMappingURL=main.mjs.map

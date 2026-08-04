@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import activate, { deactivate } from '../dist/main.mjs'
+import activate, { deactivate, DEFAULT_CLIENT_ID } from '../dist/main.mjs'
 
 function createFakeOrca({ settings = {}, capabilities } = {}) {
   const storage = new Map()
@@ -94,7 +94,7 @@ test('activate registers the manifest commands and event handlers', async () => 
   await deactivate()
 })
 
-test('survives with Discord absent and no client id configured', async () => {
+test('survives with Discord absent', async () => {
   const fake = createFakeOrca()
   await activate(fake.orca)
   await settle()
@@ -114,6 +114,38 @@ test('survives with Discord absent and no client id configured', async () => {
   const status = await fake.invoke('presence.status')
   assert.equal(status.connected, false)
   assert.equal(status.summary.working, 1)
+  await deactivate()
+})
+
+test('the shipped application id is a plausible Discord snowflake', () => {
+  // 17-20 digits: Discord ids are 64-bit snowflakes rendered in decimal.
+  assert.match(DEFAULT_CLIENT_ID, /^\d{17,20}$/)
+})
+
+test('the shipped application id is used when settings name none', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.usingDefaultApplication, true)
+  await deactivate()
+})
+
+test('a configured client id overrides the shipped one', async () => {
+  const fake = createFakeOrca({ settings: { clientId: '987654321098765432' } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.usingDefaultApplication, false)
+  await deactivate()
+})
+
+test('a blank client id falls back rather than disabling the plugin', async () => {
+  const fake = createFakeOrca({ settings: { clientId: '   ' } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.usingDefaultApplication, true)
   await deactivate()
 })
 

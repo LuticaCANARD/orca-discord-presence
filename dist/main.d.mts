@@ -11,11 +11,24 @@
  */
 import type { OrcaPluginApi } from './lib/orca-api.mjs';
 import { type PresenceSummary, type PrivacyLevel } from './lib/presence-model.mjs';
+/**
+ * Discord application backing the presence by default.
+ *
+ * Rich Presence application ids are public identifiers — they travel in every
+ * client's IPC traffic and grant nothing on their own. The sensitive half is
+ * the OAuth client secret, which Rich Presence never needs and this plugin
+ * never asks for. Shipping an id means the plugin works on install; set
+ * `clientId` in settings to publish under your own application instead (the
+ * application's name is what Discord shows as the "Playing …" line).
+ */
+export declare const DEFAULT_CLIENT_ID = "1534192299926360234";
 export type PresenceStatusReport = {
     enabled: boolean;
     privacy: PrivacyLevel;
     connected: boolean;
     socketPath: string | null;
+    /** False once `clientId` in settings points at the user's own application. */
+    usingDefaultApplication: boolean;
     summary: PresenceSummary;
     lastError: string | null;
 };

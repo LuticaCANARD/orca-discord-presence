@@ -13,20 +13,12 @@ Written in TypeScript, no runtime dependencies — the Discord Rich Presence IPC
 
 - Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins)
 - The Discord **desktop** app running on the same machine (the web client exposes no local IPC socket)
-- A Discord application id — see [Setup](#setup)
 
-## Setup
+No configuration is needed to get started — the plugin ships with a Discord application id and starts publishing as soon as an agent does something.
 
-### 1. Create a Discord application
+## Install
 
-Rich Presence requires an application id. It is a public identifier, not a secret.
-
-1. Open the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**
-2. Name it whatever you want the status to read as (the name appears as the *"Playing …"* line)
-3. Copy the **Application ID** from *General Information*
-4. Optional: upload an image under *Rich Presence → Art Assets* and note its key
-
-### 2. Install the plugin
+**From a marketplace source** (recommended):
 
 **From a marketplace source** (recommended):
 
@@ -48,7 +40,7 @@ npm install && npm run build
 
 Then Settings → Plugins → *Add development plugin* and pick the checkout directory.
 
-### 3. Configure the application id
+## Configuration (optional)
 
 Orca has no UI for per-plugin settings yet, so write them into the plugin's own settings file:
 
@@ -60,13 +52,28 @@ Orca has no UI for per-plugin settings yet, so write them into the plugin's own 
 
 ```json
 {
-  "clientId": "1234567890123456789",
   "privacy": "minimal",
-  "enabled": true
+  "enabled": true,
+  "clientId": "1234567890123456789",
+  "largeImage": "orca",
+  "largeText": "Orca"
 }
 ```
 
-Restart Orca (or disable and re-enable the plugin) to pick the file up. Without `clientId` the plugin stays loaded but publishes nothing.
+Every key is optional. Restart Orca (or disable and re-enable the plugin) to pick the file up.
+
+### Publishing under your own Discord application
+
+The status line reads *"Playing \<application name\>"*, and that name comes from the Discord application the presence is published through — not from this plugin. Point it at your own application to change it, or to attach your own artwork:
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**
+2. Name it whatever the status should read as
+3. Copy the **Application ID** from *General Information* into `clientId`
+4. Optional: upload artwork under *Rich Presence → Art Assets*, then set `largeImage` to its key
+
+A Rich Presence application id is a public identifier — it travels in every client's IPC traffic and grants nothing on its own. The sensitive half is the OAuth client secret, which Rich Presence never needs and this plugin never asks for. That is why an id ships in the source.
+
+Run **Show Connection Status** to see whether you are on the shipped application or your own.
 
 ## Privacy
 
