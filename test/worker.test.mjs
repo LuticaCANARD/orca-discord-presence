@@ -1,0 +1,190 @@
+/**
+ * Drives `main.mjs` through a fake `orca` host — the same shape the real worker
+ * runtime builds in `plugin-host-runtime.ts`. Discord is not running here, so
+ * these also cover the path that matters most in practice: the plugin must stay
+ * quiet and alive when there is nothing to connect to.
+ */
+
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import activate, { deactivate } from '../dist/main.mjs'
+
+function createFakeOrca({ settings = {}, capabilities } = {}) {
+  const storage = new Map()
+  const calls = []
+  const commands = new Map()
+  const events = new Map()
+  const logs = []
+  const stored = { ...settings }
+
+  const orca = {
+    grantedCapabilities: capabilities ?? [
+      'workspace:read',
+      'events:subscribe',
+      'storage',
+      'settings:own',
+      'notifications:show'
+    ],
+    commands: { register: (id, handler) => commands.set(id, handler) },
+    events: {
+      on: (name, handler) => {
+        const list = events.get(name) ?? []
+        list.push(handler)
+        events.set(name, list)
+      }
+    },
+    host: {
+      async call(method, params) {
+        calls.push({ method, params })
+        switch (method) {
+          case 'settings.get':
+            return { settings: stored }
+          case 'settings.set':
+            stored[params.key] = params.value
+            return { ok: true }
+          case 'storage.get':
+            return { value: storage.get(params.key) ?? null }
+          case 'storage.set':
+            storage.set(params.key, params.value)
+            return { ok: true }
+          case 'storage.delete':
+            storage.delete(params.key)
+            return { ok: true }
+          case 'workspace.readContext':
+            return { branch: 'feat/presence', displayName: 'orca-discord-presence', terminals: [] }
+          case 'notifications.show':
+            return { delivered: true }
+          default:
+            throw new Error(`unexpected host method: ${method}`)
+        }
+      }
+    },
+    log: (line) => logs.push(line)
+  }
+
+  return {
+    orca,
+    calls,
+    logs,
+    storage,
+    stored,
+    emit: async (name, payload) => {
+      for (const handler of events.get(name) ?? []) {
+        await handler(payload)
+      }
+    },
+    invoke: (id, args) => commands.get(id)?.(args),
+    commandIds: () => [...commands.keys()]
+  }
+}
+
+/** Lets the runtime's own awaited chain settle without leaning on timers. */
+const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+test('activate registers the manifest commands and event handlers', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  assert.deepEqual(fake.commandIds().sort(), [
+    'presence.privacy',
+    'presence.status',
+    'presence.toggle'
+  ])
+  await deactivate()
+})
+
+test('survives with Discord absent and no client id configured', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  await fake.emit('worktree.created', {
+    worktreeId: 'w1',
+    path: '/repos/app',
+    branch: 'feat/presence'
+  })
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await settle()
+
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.connected, false)
+  assert.equal(status.summary.working, 1)
+  await deactivate()
+})
+
+test('agent state is persisted so a reaped worker can rehydrate', async () => {
+  const first = createFakeOrca()
+  await activate(first.orca)
+  await settle()
+  await first.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'blocked',
+    receivedAt: Date.now()
+  })
+  await settle()
+  await deactivate()
+
+  const persisted = first.storage.get('presence-state')
+  assert.ok(persisted, 'expected state in storage')
+
+  // Simulate the re-fork: a fresh host whose storage already holds the state.
+  const second = createFakeOrca()
+  second.storage.set('presence-state', persisted)
+  await activate(second.orca)
+  await settle()
+  const status = await second.invoke('presence.status')
+  assert.equal(status.summary.blocked, 1)
+  await deactivate()
+})
+
+test('toggle and privacy commands persist their settings', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+
+  assert.deepEqual(await fake.invoke('presence.toggle'), { enabled: false })
+  assert.equal(fake.stored.enabled, false)
+
+  assert.deepEqual(await fake.invoke('presence.privacy'), { privacy: 'off' })
+  assert.equal(fake.stored.privacy, 'off')
+
+  assert.deepEqual(await fake.invoke('presence.privacy'), { privacy: 'full' })
+  await deactivate()
+})
+
+test('stored settings are honoured on activate', async () => {
+  const fake = createFakeOrca({ settings: { privacy: 'full', enabled: false } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.privacy, 'full')
+  assert.equal(status.enabled, false)
+  await deactivate()
+})
+
+test('a narrowed capability grant skips the calls it would fail', async () => {
+  const fake = createFakeOrca({ capabilities: ['events:subscribe', 'storage'] })
+  await activate(fake.orca)
+  await settle()
+  assert.ok(!fake.calls.some((call) => call.method === 'workspace.readContext'))
+  await deactivate()
+})
+
+test('malformed events do not take the worker down', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  await fake.emit('agent.status.changed', null)
+  await fake.emit('worktree.created', { worktreeId: '' })
+  await fake.emit('worktree.removed', undefined)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.summary.panes, 0)
+  await deactivate()
+})

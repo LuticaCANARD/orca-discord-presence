@@ -1,0 +1,16 @@
+{
+  "name": "Lutica's Orca Plugins",
+  "owner": "LuticaCANARD",
+  "plugins": [
+    {
+      "id": "lutica-canard.discord-presence",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/LuticaCANARD/orca-discord-presence.git",
+        "ref": "main"
+      },
+      "description": "Publishes your Orca agent fleet's activity to Discord Rich Presence.",
+      "categories": ["integrations", "status"]
+    }
+  ]
+}

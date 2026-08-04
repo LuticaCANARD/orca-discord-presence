@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # Why: Orca installs the plugin directory as-is with no build step, so a
+      # dist/ that lags behind src/ ships a stale plugin to every user. Fail the
+      # build rather than let the two drift.
+      - name: dist/ is up to date with src/
+        run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is stale — run 'npm run build' and commit the result"
+            git diff --stat -- dist
+            exit 1
+          fi
+      - run: node --test

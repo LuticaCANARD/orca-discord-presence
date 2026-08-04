@@ -1,0 +1,6 @@
+node_modules/
+*.tsbuildinfo
+.DS_Store
+
+# dist/ is intentionally NOT ignored: Orca installs the plugin directory as-is
+# with no build step, so the compiled entry must be committed.
