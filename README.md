@@ -28,10 +28,10 @@ Nothing else. The plugin ships with a Discord application id and starts publishi
 Settings → Plugins → *Add marketplace*, paste the URL, and accept the consent dialog:
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.1.0
 ```
 
-Orca pins the listing to an exact release commit. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
+The `#v0.1.0` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
 
 ## Privacy
 
@@ -155,7 +155,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (63 tests)
+npm test           # build + node --test (64 tests)
 npm run typecheck  # no emit
 ```
 
@@ -177,11 +177,12 @@ Orca ships no types package for plugin authors, so `src/lib/orca-api.mts` transc
 
 ### Cutting a release
 
-Three places carry the version, and a test fails if they disagree:
+Four places carry the version, and a test fails if they disagree:
 
 1. `package.json` → `version`
 2. `orca-plugin.json` → `version`
 3. `orca-marketplace.json` → `plugins[].source.ref` (as `v<version>`)
+4. `README.md` → the install URL's `#v<version>` fragment
 
 Then `npm run build`, commit, and push a matching tag:
 
