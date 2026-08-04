@@ -14,6 +14,7 @@
     "commands": [
       { "id": "presence.toggle", "title": "Discord Presence: Toggle" },
       { "id": "presence.privacy", "title": "Discord Presence: Cycle Privacy Level" },
+      { "id": "presence.header", "title": "Discord Presence: Set Header" },
       { "id": "presence.status", "title": "Discord Presence: Show Connection Status" }
     ],
     "events": [

@@ -29,6 +29,12 @@ export type PresenceStatusReport = {
     socketPath: string | null;
     /** False once `clientId` in settings points at the user's own application. */
     usingDefaultApplication: boolean;
+    /** The header template as configured — may still hold `{workspace}`. */
+    header: string;
+    /** The header as published, tokens resolved against the current privacy. */
+    headerText: string;
+    /** Art asset key published as the large image; empty when turned off. */
+    largeImage: string;
     summary: PresenceSummary;
     lastError: string | null;
 };

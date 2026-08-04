@@ -9,10 +9,17 @@ import {
   applyWorktreeRemoved,
   buildActivity,
   createPresenceState,
+  DEFAULT_HEADER,
+  DEFAULT_LARGE_IMAGE,
+  DEFAULT_LARGE_TEXT,
   deserializeState,
   describeActivity,
+  describeWorkspaces,
+  HEADER_PRESETS,
+  nextHeader,
   nextPrivacy,
   pruneStale,
+  renderHeader,
   serializeState,
   STALE_STATUS_MS,
   summarize
@@ -172,17 +179,190 @@ test('minimal privacy publishes no project or branch name', () => {
   assert.equal(activity.state, '1 agent working')
 })
 
-test('full privacy publishes project and branch', () => {
+test('full privacy publishes header, project and branch', () => {
   const state = createPresenceState()
   applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
   const activity = buildActivity({
     state,
-    focus: { displayName: 'orca', branch: 'main' },
+    focus: { displayName: 'checkout-service', branch: 'main' },
     privacy: 'full',
     startedAt: 1000
   })
-  assert.equal(activity.details, 'orca · main')
+  assert.equal(activity.details, `${DEFAULT_HEADER} · checkout-service · main`)
   assert.equal(activity.timestamps.start, 1000)
+})
+
+test('a project matching the header is not repeated', () => {
+  const state = createPresenceState()
+  const activity = buildActivity({
+    state,
+    focus: { displayName: 'orca', branch: 'main' },
+    privacy: 'full',
+    startedAt: 0
+  })
+  assert.equal(activity.details, 'Orca · main')
+})
+
+test('header tokens resolve at full privacy', () => {
+  const state = createPresenceState()
+  const context = {
+    focus: { displayName: 'checkout-service', branch: 'feat/ipc' },
+    state,
+    privacy: 'full'
+  }
+  assert.equal(renderHeader('{workspace}', context), 'checkout-service')
+  assert.equal(renderHeader('{workspace} · {branch}', context), 'checkout-service · feat/ipc')
+  assert.equal(renderHeader('Orca — {workspace}', context), 'Orca — checkout-service')
+})
+
+test('header tokens blank out at minimal, taking their separators with them', () => {
+  const state = createPresenceState()
+  const context = {
+    focus: { displayName: 'secret-client', branch: 'feat/acme' },
+    state,
+    privacy: 'minimal'
+  }
+  // Falls back to the default name rather than publishing an empty line.
+  assert.equal(renderHeader('{workspace}', context), DEFAULT_HEADER)
+  assert.equal(renderHeader('{workspace} · {branch}', context), DEFAULT_HEADER)
+  assert.equal(renderHeader('Orca · {workspace}', context), 'Orca')
+
+  const activity = buildActivity({
+    state,
+    focus: context.focus,
+    privacy: 'minimal',
+    header: '{workspace} · {branch}'
+  })
+  const encoded = JSON.stringify(activity)
+  assert.ok(!encoded.includes('secret-client'), encoded)
+  assert.ok(!encoded.includes('acme'), encoded)
+})
+
+test('a token header does not repeat the project it already names', () => {
+  const state = createPresenceState()
+  const activity = buildActivity({
+    state,
+    focus: { displayName: 'checkout-service', branch: 'feat/ipc' },
+    privacy: 'full',
+    header: '{workspace}'
+  })
+  assert.equal(activity.details, 'checkout-service · feat/ipc')
+})
+
+test('an empty header stays empty rather than falling back', () => {
+  const state = createPresenceState()
+  const context = { focus: null, state, privacy: 'full' }
+  assert.equal(renderHeader('', context), '')
+  assert.equal(renderHeader('   ', context), '')
+})
+
+test('the header cycle walks the presets and reaches "hidden"', () => {
+  const seen = []
+  let header = DEFAULT_HEADER
+  for (let step = 0; step < HEADER_PRESETS.length; step += 1) {
+    header = nextHeader(header)
+    seen.push(header)
+  }
+  assert.deepEqual(seen, [...HEADER_PRESETS.slice(1), HEADER_PRESETS[0]])
+  // A hand-written header is not in the cycle, so it restarts from the top.
+  assert.equal(nextHeader('My Fleet'), HEADER_PRESETS[0])
+})
+
+test('the header is configurable and can be turned off with a blank string', () => {
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+
+  const renamed = buildActivity({ state, focus: null, privacy: 'minimal', header: 'Fleet' })
+  assert.equal(renamed.details, 'Fleet')
+
+  const off = buildActivity({ state, focus: null, privacy: 'minimal', header: '' })
+  assert.equal(off.details, undefined)
+  assert.equal(off.state, '1 agent working')
+
+  const withProject = buildActivity({
+    state,
+    focus: { displayName: 'app', branch: 'main' },
+    privacy: 'full',
+    header: ''
+  })
+  assert.equal(withProject.details, 'app · main')
+})
+
+test('the Orca logo is published without any configuration', () => {
+  const activity = buildActivity({ state: createPresenceState(), focus: null, privacy: 'minimal' })
+  assert.equal(activity.assets.large_image, DEFAULT_LARGE_IMAGE)
+  assert.equal(activity.assets.large_text, DEFAULT_LARGE_TEXT)
+})
+
+test('configured artwork overrides the logo, and a blank key drops it', () => {
+  const state = createPresenceState()
+  const custom = buildActivity({
+    state,
+    focus: null,
+    privacy: 'minimal',
+    assets: { largeImage: 'my-art', largeText: 'My Fleet' }
+  })
+  assert.equal(custom.assets.large_image, 'my-art')
+  assert.equal(custom.assets.large_text, 'My Fleet')
+
+  const bare = buildActivity({
+    state,
+    focus: null,
+    privacy: 'minimal',
+    assets: { largeImage: '' }
+  })
+  assert.equal(bare.assets, undefined)
+})
+
+test('full privacy names the workspaces the agents are working in', () => {
+  const state = createPresenceState()
+  applyWorktreeCreated(state, { worktreeId: 'w1', path: '/repos/api', branch: 'main' })
+  applyWorktreeCreated(state, { worktreeId: 'w2', path: '/repos/web', branch: 'feat/x' })
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  applyAgentStatus(state, { paneKey: 'b', worktreeId: 'w2', state: 'working', receivedAt: 1 })
+
+  assert.deepEqual(describeWorkspaces(state), ['api', 'web'])
+  const activity = buildActivity({
+    state,
+    focus: { displayName: 'api', branch: 'main' },
+    privacy: 'full'
+  })
+  assert.equal(activity.state, '2 agents working · in api, web')
+})
+
+test('a worktree without a path falls back to its branch as a name', () => {
+  const state = createPresenceState()
+  applyWorktreeCreated(state, { worktreeId: 'w1', path: '', branch: 'feat/ipc' })
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  assert.deepEqual(describeWorkspaces(state), ['feat/ipc'])
+})
+
+test('an unnamed worktree degrades to the worktree count', () => {
+  // No `worktree.created` was seen for these, so only their ids are known.
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  applyAgentStatus(state, { paneKey: 'b', worktreeId: 'w2', state: 'working', receivedAt: 1 })
+  const activity = buildActivity({ state, focus: null, privacy: 'full' })
+  assert.equal(activity.state, '2 agents working · across 2 worktrees')
+})
+
+test('a long workspace list collapses into a remainder count', () => {
+  const state = createPresenceState()
+  for (const name of ['api', 'web', 'infra', 'docs', 'cli']) {
+    applyWorktreeCreated(state, { worktreeId: name, path: `/repos/${name}`, branch: 'main' })
+    applyAgentStatus(state, { paneKey: name, worktreeId: name, state: 'working', receivedAt: 1 })
+  }
+  const activity = buildActivity({ state, focus: null, privacy: 'full' })
+  assert.equal(activity.state, '5 agents working · in api, cli, docs +2')
+})
+
+test('minimal privacy keeps workspace names out of the status line', () => {
+  const state = createPresenceState()
+  applyWorktreeCreated(state, { worktreeId: 'w1', path: '/repos/secret-client', branch: 'main' })
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  const activity = buildActivity({ state, focus: null, privacy: 'minimal' })
+  assert.ok(!JSON.stringify(activity).includes('secret-client'))
+  assert.equal(activity.state, '1 agent working')
 })
 
 test('off privacy publishes nothing at all', () => {
@@ -195,7 +375,7 @@ test('full privacy degrades when the host has no focus context', () => {
   const state = createPresenceState()
   applyWorktreeCreated(state, { worktreeId: 'w1', path: '/repos/app', branch: 'main' })
   const activity = buildActivity({ state, focus: null, privacy: 'full', startedAt: 0 })
-  assert.equal(activity.details, 'app')
+  assert.equal(activity.details, `${DEFAULT_HEADER} · app`)
   assert.equal(activity.timestamps, undefined)
 })
 

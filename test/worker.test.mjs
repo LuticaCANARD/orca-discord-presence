@@ -87,6 +87,7 @@ test('activate registers the manifest commands and event handlers', async () => 
   await activate(fake.orca)
   await settle()
   assert.deepEqual(fake.commandIds().sort(), [
+    'presence.header',
     'presence.privacy',
     'presence.status',
     'presence.toggle'
@@ -146,6 +147,90 @@ test('a blank client id falls back rather than disabling the plugin', async () =
   await settle()
   const status = await fake.invoke('presence.status')
   assert.equal(status.usingDefaultApplication, true)
+  await deactivate()
+})
+
+test('the Orca logo and header need no configuration', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.header, 'Orca')
+  assert.equal(status.largeImage, 'orca')
+  await deactivate()
+})
+
+test('settings can rename the header and swap the artwork', async () => {
+  const fake = createFakeOrca({ settings: { header: ' Fleet ', largeImage: 'my-art' } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.header, 'Fleet')
+  assert.equal(status.largeImage, 'my-art')
+  await deactivate()
+})
+
+test('blank strings turn the header and the logo off', async () => {
+  const fake = createFakeOrca({ settings: { header: '', largeImage: '' } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.header, '')
+  assert.equal(status.largeImage, '')
+  await deactivate()
+})
+
+test('the header command takes a string argument and persists it', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+
+  assert.deepEqual(await fake.invoke('presence.header', 'My Fleet'), {
+    header: 'My Fleet',
+    headerText: 'My Fleet'
+  })
+  assert.equal(fake.stored.header, 'My Fleet')
+
+  // Object forms a host or keybinding might send.
+  await fake.invoke('presence.header', { header: 'Squad' })
+  assert.equal(fake.stored.header, 'Squad')
+  await fake.invoke('presence.header', { value: 'Crew' })
+  assert.equal(fake.stored.header, 'Crew')
+
+  // An empty string is a value: it hides the header.
+  const hidden = await fake.invoke('presence.header', '')
+  assert.equal(hidden.header, '')
+  assert.equal(fake.stored.header, '')
+  await deactivate()
+})
+
+test('the header command cycles the presets when given no argument', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+
+  assert.equal((await fake.invoke('presence.header')).header, '{workspace}')
+  assert.equal((await fake.invoke('presence.header')).header, '{workspace} · {branch}')
+  assert.equal((await fake.invoke('presence.header')).header, '')
+  assert.equal((await fake.invoke('presence.header')).header, 'Orca')
+  await deactivate()
+})
+
+test('a workspace header resolves at full privacy and masks at minimal', async () => {
+  const fake = createFakeOrca({ settings: { privacy: 'full', header: '{workspace} · {branch}' } })
+  await activate(fake.orca)
+  await settle()
+
+  const full = await fake.invoke('presence.status')
+  assert.equal(full.header, '{workspace} · {branch}')
+  assert.equal(full.headerText, 'orca-discord-presence · feat/presence')
+
+  // full → minimal: the template stays, its resolved names do not.
+  await fake.invoke('presence.privacy')
+  const masked = await fake.invoke('presence.status')
+  assert.equal(masked.privacy, 'minimal')
+  assert.equal(masked.header, '{workspace} · {branch}')
+  assert.equal(masked.headerText, 'Orca')
   await deactivate()
 })
 

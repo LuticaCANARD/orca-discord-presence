@@ -10,7 +10,7 @@
  * survives the gap in plugin storage rather than in memory.
  */
 import { DiscordPresenceClient } from './lib/discord-ipc.mjs';
-import { DEFAULT_PRIVACY, applyAgentStatus, applyWorktreeCreated, applyWorktreeRemoved, buildActivity, createPresenceState, deserializeState, describeActivity, isBusy, isPrivacyLevel, nextPrivacy, pruneStale, serializeState, summarize } from './lib/presence-model.mjs';
+import { DEFAULT_HEADER, DEFAULT_LARGE_IMAGE, DEFAULT_PRIVACY, applyAgentStatus, applyWorktreeCreated, applyWorktreeRemoved, buildActivity, createPresenceState, deserializeState, describeActivity, describeWorkspaces, isBusy, isPrivacyLevel, nextHeader, nextPrivacy, renderHeader, pruneStale, serializeState, summarize } from './lib/presence-model.mjs';
 const STORAGE_KEY = 'presence-state';
 const STORAGE_STARTED_AT_KEY = 'busy-since';
 /**
@@ -44,6 +44,10 @@ export default function activate(orca) {
     orca.commands.register('presence.toggle', () => runtime.toggleEnabled());
     orca.commands.register('presence.privacy', () => runtime.cyclePrivacy());
     orca.commands.register('presence.status', () => runtime.reportStatus());
+    // Takes the new header as its argument when the host passes one, and cycles
+    // the presets when it does not — Orca has no text-input affordance for
+    // commands, so the cycle is what makes this usable from the palette alone.
+    orca.commands.register('presence.header', (args) => runtime.setHeader(args));
     orca.events.on('worktree.created', (payload) => {
         runtime.onEvent((state) => applyWorktreeCreated(state, payload));
     });
@@ -69,7 +73,8 @@ class PresenceRuntime {
         enabled: true,
         privacy: DEFAULT_PRIVACY,
         clientId: DEFAULT_CLIENT_ID,
-        assets: { largeImage: '', largeText: '' }
+        header: undefined,
+        assets: { largeImage: undefined, largeText: undefined }
     };
     #client = null;
     #connecting = false;
@@ -111,9 +116,10 @@ class PresenceRuntime {
                 enabled: stored['enabled'] !== false,
                 privacy: isPrivacyLevel(stored['privacy']) ? stored['privacy'] : DEFAULT_PRIVACY,
                 clientId: readClientId(stored['clientId']),
+                header: readOptionalString(stored['header']),
                 assets: {
-                    largeImage: typeof stored['largeImage'] === 'string' ? stored['largeImage'] : '',
-                    largeText: typeof stored['largeText'] === 'string' ? stored['largeText'] : ''
+                    largeImage: readOptionalString(stored['largeImage']),
+                    largeText: readOptionalString(stored['largeText'])
                 }
             };
         }
@@ -223,6 +229,7 @@ class PresenceRuntime {
             focus: this.#focus,
             privacy: this.#settings.privacy,
             startedAt: this.#busySince,
+            header: this.#settings.header,
             assets: this.#settings.assets
         });
         // Why: identical payloads still cost a rate-limit slot, and a fleet can emit
@@ -320,14 +327,43 @@ class PresenceRuntime {
         await this.#notify('Discord Presence', `Privacy level: ${this.#settings.privacy}`);
         return { privacy: this.#settings.privacy };
     }
+    /**
+     * Sets the header from the command's argument, or advances the preset cycle
+     * when the host passes none.
+     */
+    async setHeader(args) {
+        const requested = readHeaderArg(args);
+        const next = requested ?? nextHeader(this.#settings.header ?? DEFAULT_HEADER);
+        this.#settings.header = next;
+        await this.#saveSetting('header', next);
+        this.#lastPayload = '';
+        this.#schedulePublish();
+        const headerText = this.#renderHeader(next);
+        // Templates and their result differ; showing both is what makes it obvious
+        // that `{workspace}` is empty because privacy is masking it, not broken.
+        await this.#notify('Discord Presence', next === ''
+            ? 'Header hidden.'
+            : next === headerText
+                ? `Header: ${headerText}`
+                : `Header: ${next} → ${headerText}`);
+        return { header: next, headerText };
+    }
     async reportStatus() {
         const summary = summarize(this.#state);
+        const header = this.#settings.header ?? DEFAULT_HEADER;
+        const headerText = this.#renderHeader(header);
+        const largeImage = this.#settings.assets.largeImage ?? DEFAULT_LARGE_IMAGE;
         const connection = this.#client?.connected
             ? `connected (${this.#client.socketPath})`
             : (this.#lastError ?? 'not connected');
+        // Mirrors what would actually be published, workspace names included — the
+        // point of the command is to show what Discord is being told.
         const body = [
             `${this.#settings.enabled ? 'Enabled' : 'Disabled'} · privacy: ${this.#settings.privacy}`,
-            describeActivity(summary),
+            [headerText, describeActivity(summary, this.#visibleWorkspaces(summary))]
+                .filter(Boolean)
+                .join(' · '),
+            `logo: ${largeImage || 'off'}`,
             connection
         ].join('\n');
         await this.#notify('Discord Presence', body);
@@ -337,9 +373,23 @@ class PresenceRuntime {
             connected: Boolean(this.#client?.connected),
             socketPath: this.#client?.socketPath ?? null,
             usingDefaultApplication: this.#settings.clientId === DEFAULT_CLIENT_ID,
+            header,
+            headerText,
+            largeImage,
             summary,
             lastError: this.#lastError
         };
+    }
+    #renderHeader(template) {
+        return renderHeader(template, {
+            focus: this.#focus,
+            state: this.#state,
+            privacy: this.#settings.privacy
+        });
+    }
+    /** Workspace names only leak into the status line at `full` privacy. */
+    #visibleWorkspaces(summary) {
+        return this.#settings.privacy === 'full' ? describeWorkspaces(this.#state, summary) : [];
     }
     async #clearPresence() {
         this.#lastPayload = '';
@@ -401,5 +451,32 @@ function readClientId(configured) {
         return configured.trim();
     }
     return DEFAULT_CLIENT_ID;
+}
+/**
+ * Keeps `""` distinct from "absent": a blank string is how the settings file
+ * turns the header or the logo off, whereas a missing key takes the default.
+ */
+function readOptionalString(configured) {
+    return typeof configured === 'string' ? configured.trim() : undefined;
+}
+/**
+ * Header handed to the command. Accepts a bare string or the object shapes a
+ * host or keybinding is likely to send, since Orca's command arguments are
+ * `unknown` by contract. `""` is a value, not an absence — it hides the header.
+ */
+function readHeaderArg(args) {
+    if (typeof args === 'string') {
+        return args.trim();
+    }
+    if (typeof args === 'object' && args !== null) {
+        const record = args;
+        for (const key of ['header', 'value', 'text']) {
+            const candidate = record[key];
+            if (typeof candidate === 'string') {
+                return candidate.trim();
+            }
+        }
+    }
+    return undefined;
 }
 //# sourceMappingURL=main.mjs.map

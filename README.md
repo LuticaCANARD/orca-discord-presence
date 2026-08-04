@@ -1,11 +1,16 @@
 # Orca Discord Presence
 
-Publishes what your [Orca](https://github.com/stablyai/orca) agent fleet is doing to your Discord status.
+Publishes what your [Orca](https://github.com/stablyai/orca) agent fleet is doing to your Discord status, next to the Orca logo.
 
 ```
-Working in Orca
-2 agents working · 1 blocked · across 2 worktrees
+[logo]  Orca                                        ← minimal (default)
+        2 agents working · 1 blocked · across 2 worktrees
+
+[logo]  Orca · checkout-service · feat/ipc          ← full
+        2 agents working · 1 blocked · in checkout-service, web
 ```
+
+The first line is the **header** (configurable, `Orca` by default) followed by the focused workspace and its branch; the second is the fleet, naming the workspaces the agents are working in.
 
 Written in TypeScript, no runtime dependencies — the Discord Rich Presence IPC protocol is spoken directly over `node:net`.
 
@@ -17,8 +22,6 @@ Written in TypeScript, no runtime dependencies — the Discord Rich Presence IPC
 No configuration is needed to get started — the plugin ships with a Discord application id and starts publishing as soon as an agent does something.
 
 ## Install
-
-**From a marketplace source** (recommended):
 
 **From a marketplace source** (recommended):
 
@@ -57,21 +60,48 @@ Orca has no UI for per-plugin settings yet, so write them into the plugin's own 
   "privacy": "minimal",
   "enabled": true,
   "clientId": "1234567890123456789",
+  "header": "Orca",
   "largeImage": "orca",
   "largeText": "Orca"
 }
 ```
 
-Every key is optional. Restart Orca (or disable and re-enable the plugin) to pick the file up.
+| Key | Default | Effect |
+| --- | --- | --- |
+| `enabled` | `true` | Publish at all |
+| `privacy` | `"minimal"` | See [Privacy](#privacy) |
+| `clientId` | shipped id | The Discord application to publish through |
+| `header` | `"Orca"` | Leading segment of the first line; supports `{workspace}` / `{branch}`; `""` drops it |
+| `largeImage` | `"orca"` | Art asset key for the logo; `""` publishes no image |
+| `largeText` | `"Orca"` | Tooltip shown when hovering the logo |
+
+Every key is optional. Restart Orca (or disable and re-enable the plugin) to pick the file up. Run **Show Connection Status** to see the header and logo key currently in effect.
+
+### Changing the header without leaving Orca
+
+The **Discord Presence: Set Header** command writes the same setting, so the settings file is a convenience rather than the only way in:
+
+- **With an argument** — the argument is the new header, so a keybinding or automation can set it outright: `"My Fleet"`, or `{ "header": "My Fleet" }`. An empty string hides the header.
+- **With no argument** — the command cycles the presets, which is what the command palette can do on its own since Orca has no text input for commands:
+
+  `Orca` → `{workspace}` → `{workspace} · {branch}` → *hidden* → `Orca` → …
+
+`{workspace}` and `{branch}` are placeholders resolved at publish time, not literals frozen into the setting. That distinction is the point: a header of `checkout-service` keeps publishing that name after a drop to `minimal`, while `{workspace}` blanks out and falls back to `Orca`. A token that resolves to nothing takes its separator with it, so the line never reads as a stray middle dot.
+
+### The logo, and what Discord will actually render
+
+`largeImage` is an **art asset key**, not a file path: Discord renders artwork that was uploaded to the application the presence is published through. The shipped application carries the Orca logo under the key `orca`, which is why no configuration is needed.
+
+Point `clientId` at your own application and that changes — the key `orca` means nothing there until you upload artwork under that name. Either upload a logo as `orca`, or set `largeImage` to whatever key you did use.
 
 ### Publishing under your own Discord application
 
-The status line reads *"Playing \<application name\>"*, and that name comes from the Discord application the presence is published through — not from this plugin. Point it at your own application to change it, or to attach your own artwork:
+The line above the header reads *"Playing \<application name\>"*, and that name comes from the Discord application the presence is published through — not from this plugin, and it cannot be set over Rich Presence IPC. That is what `header` exists for: it is the topmost line this plugin does control. To change the *"Playing …"* line itself, publish through your own application:
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**
 2. Name it whatever the status should read as
 3. Copy the **Application ID** from *General Information* into `clientId`
-4. Optional: upload artwork under *Rich Presence → Art Assets*, then set `largeImage` to its key
+4. Upload artwork under *Rich Presence → Art Assets*, then set `largeImage` to its key
 
 A Rich Presence application id is a public identifier — it travels in every client's IPC traffic and grants nothing on its own. The sensitive half is the OAuth client secret, which Rich Presence never needs and this plugin never asks for. That is why an id ships in the source.
 
@@ -83,11 +113,13 @@ Run **Show Connection Status** to see whether you are on the shipped application
 
 | Level | Published |
 | --- | --- |
-| `full` | Worktree display name and branch, plus agent counts — `orca · feat/ipc` |
-| `minimal` *(default)* | Agent counts only — no project, no branch |
+| `full` | Header, focused workspace and branch, agent counts, and the names of the workspaces agents are working in — `Orca · checkout-service · feat/ipc` / `2 agents working · in checkout-service, web` |
+| `minimal` *(default)* | Header and agent counts only — no workspace names, no branch. Busy worktrees are counted, never named, and `{workspace}` / `{branch}` in the header blank out |
 | `off` | Nothing; the status is cleared |
 
-Cycle levels at runtime with the **Discord Presence: Cycle Privacy Level** command. The `minimal` masking is covered by a test asserting that no project or branch string reaches the payload.
+Cycle levels at runtime with the **Discord Presence: Cycle Privacy Level** command. The `minimal` masking is covered by tests asserting that no project, branch, or workspace name reaches the payload.
+
+Workspace names come from the worktree's directory name (its branch is the fallback). Only worktrees Orca announced while the plugin was running can be named — anything else is counted instead, so a `full` status degrades to `across 2 worktrees` rather than going blank. Long lists collapse: `in api, cli, docs +2`.
 
 ## Commands
 
@@ -95,16 +127,17 @@ Cycle levels at runtime with the **Discord Presence: Cycle Privacy Level** comma
 | --- | --- |
 | `Discord Presence: Toggle` | Enable/disable publishing; persists |
 | `Discord Presence: Cycle Privacy Level` | `full` → `minimal` → `off` → … |
-| `Discord Presence: Show Connection Status` | Notification with connection state, socket path, and current fleet summary |
+| `Discord Presence: Set Header` | Sets the first line from the command's argument, or cycles the presets without one; persists |
+| `Discord Presence: Show Connection Status` | Notification with the line being published, the logo key, connection state, and socket path |
 
 ## Capabilities requested
 
 | Capability | Why |
 | --- | --- |
-| `workspace:read` | Worktree display name and branch for the `full` privacy level |
+| `workspace:read` | Focused workspace name and branch for the `full` privacy level |
 | `events:subscribe` | Worktree lifecycle and agent status changes — the data being published |
 | `storage` | Fleet state survives worker reaps (see below) |
-| `settings:own` | The plugin's own `clientId` / `privacy` / `enabled` |
+| `settings:own` | The plugin's own `clientId` / `privacy` / `enabled` / `header` / artwork keys |
 | `notifications:show` | Command feedback |
 
 `secrets` and `terminal:send` are deliberately **not** requested.
@@ -124,7 +157,7 @@ Cycle levels at runtime with the **Discord Presence: Cycle Privacy Level** comma
 ```bash
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (34 tests)
+npm test           # build + node --test (63 tests)
 npm run typecheck  # no emit
 ```
 
