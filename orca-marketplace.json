@@ -7,7 +7,7 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/LuticaCANARD/orca-discord-presence.git",
-        "ref": "main"
+        "ref": "v0.1.0"
       },
       "description": "Publishes your Orca agent fleet's activity to Discord Rich Presence.",
       "categories": ["integrations", "status"]

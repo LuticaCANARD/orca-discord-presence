@@ -30,6 +30,8 @@ https://github.com/LuticaCANARD/orca-discord-presence.git
 
 Orca reads `orca-marketplace.json` from that repository, resolves the entry to an exact commit, and shows the consent dialog listing the capabilities below.
 
+The listing pins a **release tag**, not `main` — a branch ref would re-resolve to whatever HEAD happens to be on the next marketplace refresh, quietly moving users onto unreleased commits. A test enforces that the ref is a tag and that it matches the manifest version.
+
 **From a local checkout** (for development):
 
 ```bash
@@ -127,6 +129,22 @@ npm run typecheck  # no emit
 ```
 
 `dist/` **is committed on purpose.** Orca installs a plugin directory as-is with no build step on the host side, so the compiled entry has to be in the repository. CI verifies that `dist/` matches the sources.
+
+### Cutting a release
+
+Three places carry the version and a test fails if they disagree:
+
+1. `package.json` → `version`
+2. `orca-plugin.json` → `version`
+3. `orca-marketplace.json` → `plugins[].source.ref` (as `v<version>`)
+
+Then `npm run build`, commit, and push a matching tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The release workflow re-runs typecheck, build, the stale-`dist/` check and the tests, verifies the tag matches the manifest, and publishes a GitHub release.
 
 Layout:
 

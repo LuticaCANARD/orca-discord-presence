@@ -141,6 +141,32 @@ test('marketplace entry points at this plugin over an allowed git URL', () => {
   assert.equal(entry.source.url, `${manifest.repository}.git`, 'index and manifest disagree on the repo')
 })
 
+test('the marketplace ref pins a tag, not a moving branch', () => {
+  const entry = marketplace.plugins.find(
+    (plugin) => plugin.id === `${manifest.publisher}.${manifest.id}`
+  )
+  // A branch ref re-resolves to whatever HEAD happens to be on the next
+  // marketplace refresh, so users would silently drift onto unreleased commits.
+  assert.match(
+    entry.source.ref,
+    /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/,
+    `ref "${entry.source.ref}" must be a version tag`
+  )
+})
+
+test('manifest, package, and release tag agree on the version', () => {
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
+  )
+  const entry = marketplace.plugins.find(
+    (plugin) => plugin.id === `${manifest.publisher}.${manifest.id}`
+  )
+  // Three places to bump; forgetting one ships a tag whose contents disagree
+  // with what the marketplace claims to be installing.
+  assert.equal(pkg.version, manifest.version, 'package.json and orca-plugin.json disagree')
+  assert.equal(entry.source.ref, `v${manifest.version}`, 'marketplace ref lags the manifest version')
+})
+
 test('marketplace categories are supported slugs', () => {
   for (const entry of marketplace.plugins) {
     for (const category of entry.categories ?? []) {

@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      # Why: Orca installs the tagged tree as-is. A dist/ that disagrees with
+      # src/ at the tag ships a plugin nobody can reproduce from the sources.
+      - name: dist/ is up to date with src/
+        run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is stale at this tag — run 'npm run build' and re-tag"
+            git diff --stat -- dist
+            exit 1
+          fi
+
+      - run: node --test
+
+      # Why: the marketplace entry pins a tag and the manifest carries its own
+      # version. A tag that disagrees with either would install contents that
+      # do not match what the listing advertises.
+      - name: Tag matches the manifest version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          manifest_version="v$(node -p "require('./orca-plugin.json').version")"
+          if [ "$tag" != "$manifest_version" ]; then
+            echo "::error::tag $tag does not match orca-plugin.json ($manifest_version)"
+            exit 1
+          fi
+
+      - name: Create release
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
