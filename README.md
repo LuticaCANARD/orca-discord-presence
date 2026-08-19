@@ -20,7 +20,7 @@ TypeScript, no runtime dependencies — the Discord Rich Presence IPC protocol i
 
 ## Requirements
 
-- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.178-rc.2`, see [Compatibility](#compatibility)
+- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.185`, see [Compatibility](#compatibility)
 - The Discord **desktop** app running on the same machine (the web client exposes no local IPC socket)
 
 Nothing else. The plugin ships with a Discord application id and starts publishing as soon as an agent does something.
@@ -157,7 +157,7 @@ Every key is optional, and `""` means *off* rather than *default*. Restart Orca,
 
 ## Compatibility
 
-Last checked against Orca `1.4.178-rc.2`. The engine floor stays `>=1.4.0`: nothing this plugin depends on has moved since the plugin system landed.
+Last checked against Orca `v1.4.185`, the newest release, and against `main` (which carries its own `1.4.178-rc.2` version — the release line and `main` number themselves separately). Every file below is byte-identical between the two, so "unchanged" means unchanged in both. The engine floor stays `>=1.4.0`: nothing this plugin depends on has moved since the plugin system landed.
 
 Re-read upstream and found unchanged — these are the contracts `src/lib/orca-api.mts` transcribes:
 
@@ -166,7 +166,7 @@ Re-read upstream and found unchanged — these are the contracts `src/lib/orca-a
 | Host API v0 method table (`plugin-host-api.ts`) | 13 methods, all still `experimental`; `workspace.readContext` still returns `{ branch, displayName, terminals }` |
 | Event set (`plugin-events.ts`) | Still the three worktree/agent events — no focus-change event |
 | Capability kinds (`plugin-capabilities.ts`) | Still seven unscoped kinds; still no `net:*` |
-| Agent states (`agent-status-types.ts`) | Still `working` / `blocked` / `waiting` / `done` |
+| Agent states (`agent-status-types.ts`) | Still `working` / `blocked` / `waiting` / `done`; the file's churn between the two versions is internal (observation metadata, per-turn timestamps) and never reaches the event payload |
 | Worker environment (`plugin-worker-env.ts`) | Still an allowlist without `XDG_RUNTIME_DIR` |
 | Idle reap (`plugin-host-protocol.ts`) | Still 5 minutes |
 | Settings and storage location | Still `<userData>/plugins-data/<publisher>.<id>/` |
@@ -185,7 +185,7 @@ Contribution kinds the manifest could carry and deliberately does not:
 
 **The focused workspace is polled, not pushed.** Orca emits no focus-change event, so `full` privacy refreshes the workspace and branch every 30 seconds. Switching worktrees can take that long to show up.
 
-**Command arguments depend on the host.** **Set Header** accepts a string or `{ header }`, and **Cycle Privacy Level** a level or `{ privacy }`, when Orca passes an argument through. As of `1.4.178-rc.2` no host path does: the palette and recorded shortcuts both invoke commands with no argument, even though the IPC carries one. Until that changes the cycles are the whole interface, and free-form headers go in the settings file.
+**Command arguments depend on the host.** **Set Header** accepts a string or `{ header }`, and **Cycle Privacy Level** a level or `{ privacy }`, when Orca passes an argument through. As of `1.4.185` no host path does: the palette and recorded shortcuts both invoke commands with no argument, even though the IPC carries one. Until that changes the cycles are the whole interface, and free-form headers go in the settings file.
 
 **Linux socket discovery is heuristic.** Orca's worker environment is an allowlist that omits `XDG_RUNTIME_DIR`, so `/run/user/<uid>` is reconstructed from `process.getuid()`. Flatpak and Snap layouts are probed too.
 
