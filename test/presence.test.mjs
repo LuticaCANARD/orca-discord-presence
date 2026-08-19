@@ -8,6 +8,7 @@ import {
   applyWorktreeCreated,
   applyWorktreeRemoved,
   buildActivity,
+  busyCount,
   createPresenceState,
   DEFAULT_HEADER,
   DEFAULT_LARGE_IMAGE,
@@ -16,6 +17,7 @@ import {
   describeActivity,
   describeWorkspaces,
   HEADER_PRESETS,
+  isBusy,
   nextHeader,
   nextPrivacy,
   pruneStale,
@@ -161,6 +163,71 @@ test('describeActivity reads naturally at each fleet size', () => {
 
   applyAgentStatus(state, { paneKey: 'd', worktreeId: 'w2', state: 'blocked', receivedAt: 1 })
   assert.equal(describeActivity(summarize(state)), '2 agents working · 1 blocked · across 2 worktrees')
+
+  applyAgentStatus(state, { paneKey: 'e', worktreeId: 'w2', state: 'waiting', receivedAt: 1 })
+  assert.equal(
+    describeActivity(summarize(state)),
+    '2 agents working · 1 blocked · 1 waiting · across 2 worktrees'
+  )
+})
+
+test('a fleet waiting on the user is not idle', () => {
+  // Orca maps `waiting` and `blocked` alike onto "agent needs user attention",
+  // so a fleet sitting on permission prompts must not read as "Fleet idle".
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'waiting', receivedAt: 1 })
+  const summary = summarize(state)
+  assert.equal(isBusy(summary), true)
+  assert.equal(busyCount(summary), 1)
+  assert.equal(describeActivity(summary), '1 waiting')
+
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'done', receivedAt: 1 })
+  assert.equal(isBusy(summarize(state)), false)
+})
+
+test('the party size gauges busy agents against the fleet', () => {
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  applyAgentStatus(state, { paneKey: 'b', worktreeId: 'w1', state: 'waiting', receivedAt: 1 })
+  applyAgentStatus(state, { paneKey: 'c', worktreeId: 'w2', state: 'done', receivedAt: 1 })
+
+  const activity = buildActivity({ state, focus: null, privacy: 'minimal', partyId: 'party-1' })
+  assert.deepEqual(activity.party, { id: 'party-1', size: [2, 3] })
+
+  // Counts are not names: the gauge is published at every level that publishes
+  // at all, and carries nothing `minimal` masks.
+  const full = buildActivity({ state, focus: null, privacy: 'full', partyId: 'party-1' })
+  assert.deepEqual(full.party, activity.party)
+
+  // Without an id Discord still gets a size; the id is only a party handle.
+  assert.deepEqual(buildActivity({ state, focus: null, privacy: 'minimal' }).party, { size: [2, 3] })
+})
+
+test('an idle fleet publishes no party at all', () => {
+  const state = createPresenceState()
+  assert.equal(buildActivity({ state, focus: null, privacy: 'minimal' }).party, undefined)
+
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'done', receivedAt: 1 })
+  // `(0 of 1)` would read as a broken party rather than as an idle fleet.
+  assert.equal(buildActivity({ state, focus: null, privacy: 'minimal' }).party, undefined)
+})
+
+test('a badge is published only when one is configured, and needs a logo', () => {
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: 1 })
+  const input = { state, focus: null, privacy: 'minimal' }
+
+  // Nothing configured: the shipped application hosts no badge artwork, so
+  // publishing a key would render an empty square.
+  assert.equal(buildActivity(input).assets.small_image, undefined)
+
+  const badged = buildActivity({ ...input, assets: { smallImage: 'busy', smallText: 'Fleet busy' } })
+  assert.equal(badged.assets.small_image, 'busy')
+  assert.equal(badged.assets.small_text, 'Fleet busy')
+
+  // A badge without a logo has nothing to sit on and is dropped.
+  const noLogo = buildActivity({ ...input, assets: { largeImage: '', smallImage: 'busy' } })
+  assert.equal(noLogo.assets, undefined)
 })
 
 test('minimal privacy publishes no project or branch name', () => {

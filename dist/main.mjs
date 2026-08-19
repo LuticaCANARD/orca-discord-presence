@@ -9,6 +9,7 @@
  * been quiet for a few minutes, and comes back on the next agent event. State
  * survives the gap in plugin storage rather than in memory.
  */
+import { randomUUID } from 'node:crypto';
 import { DiscordPresenceClient } from './lib/discord-ipc.mjs';
 import { DEFAULT_HEADER, DEFAULT_LARGE_IMAGE, DEFAULT_PRIVACY, applyAgentStatus, applyWorktreeCreated, applyWorktreeRemoved, buildActivity, createPresenceState, deserializeState, describeActivity, describeWorkspaces, isBusy, isPrivacyLevel, nextHeader, nextPrivacy, renderHeader, pruneStale, serializeState, summarize } from './lib/presence-model.mjs';
 const STORAGE_KEY = 'presence-state';
@@ -42,8 +43,11 @@ export default function activate(orca) {
     activeRuntime = runtime;
     runtime.start();
     orca.commands.register('presence.toggle', () => runtime.toggleEnabled());
-    orca.commands.register('presence.privacy', () => runtime.cyclePrivacy());
+    // Takes a level when the host passes one, and cycles otherwise — same shape
+    // as the header command, for the same reason.
+    orca.commands.register('presence.privacy', (args) => runtime.setPrivacy(args));
     orca.commands.register('presence.status', () => runtime.reportStatus());
+    orca.commands.register('presence.reconnect', () => runtime.reconnectNow());
     // Takes the new header as its argument when the host passes one, and cycles
     // the presets when it does not — Orca has no text-input affordance for
     // commands, so the cycle is what makes this usable from the palette alone.
@@ -74,7 +78,12 @@ class PresenceRuntime {
         privacy: DEFAULT_PRIVACY,
         clientId: DEFAULT_CLIENT_ID,
         header: undefined,
-        assets: { largeImage: undefined, largeText: undefined }
+        assets: {
+            largeImage: undefined,
+            largeText: undefined,
+            smallImage: undefined,
+            smallText: undefined
+        }
     };
     #client = null;
     #connecting = false;
@@ -88,6 +97,14 @@ class PresenceRuntime {
     #focusTimer = null;
     #disposed = false;
     #lastError = null;
+    /**
+     * Per-worker party id. Random rather than fixed: a party id is the handle
+     * Discord would group people by, and two Orca users are not in a party
+     * together just because they both run this plugin. Nothing joinable is
+     * published — Rich Presence needs a join secret for that, which this plugin
+     * never sends.
+     */
+    #partyId = randomUUID();
     constructor(orca) {
         this.#orca = orca;
         // Consent is granted per manifest, but a host that narrows a grant should
@@ -119,7 +136,9 @@ class PresenceRuntime {
                 header: readOptionalString(stored['header']),
                 assets: {
                     largeImage: readOptionalString(stored['largeImage']),
-                    largeText: readOptionalString(stored['largeText'])
+                    largeText: readOptionalString(stored['largeText']),
+                    smallImage: readOptionalString(stored['smallImage']),
+                    smallText: readOptionalString(stored['smallText'])
                 }
             };
         }
@@ -230,7 +249,8 @@ class PresenceRuntime {
             privacy: this.#settings.privacy,
             startedAt: this.#busySince,
             header: this.#settings.header,
-            assets: this.#settings.assets
+            assets: this.#settings.assets,
+            partyId: this.#partyId
         });
         // Why: identical payloads still cost a rate-limit slot, and a fleet can emit
         // many events that do not change what the status would say.
@@ -314,8 +334,13 @@ class PresenceRuntime {
         await this.#notify('Discord Presence', this.#settings.enabled ? 'Presence enabled.' : 'Presence disabled.');
         return { enabled: this.#settings.enabled };
     }
-    async cyclePrivacy() {
-        this.#settings.privacy = nextPrivacy(this.#settings.privacy);
+    /**
+     * Sets the privacy level from the command's argument, or advances the cycle
+     * when the host passes none.
+     */
+    async setPrivacy(args) {
+        const requested = readPrivacyArg(args);
+        this.#settings.privacy = requested ?? nextPrivacy(this.#settings.privacy);
         await this.#saveSetting('privacy', this.#settings.privacy);
         this.#lastPayload = '';
         if (this.#settings.privacy === 'off') {
@@ -348,11 +373,35 @@ class PresenceRuntime {
                 : `Header: ${next} → ${headerText}`);
         return { header: next, headerText };
     }
+    /**
+     * Drops the connection and publishes again straight away.
+     *
+     * The reconnect backoff already recovers on its own, but only while the
+     * worker is alive — Discord started after Orca, or restarted during a quiet
+     * stretch, leaves a reaped worker with nothing to retry. Invoking the command
+     * re-forks the worker, and this makes that fork reconnect now instead of
+     * waiting out the backoff.
+     */
+    async reconnectNow() {
+        if (this.#reconnectTimer) {
+            clearTimeout(this.#reconnectTimer);
+            this.#reconnectTimer = null;
+        }
+        this.#reconnectAttempt = 0;
+        this.#lastPayload = '';
+        this.#client?.close();
+        this.#client = null;
+        if (this.#settings.enabled && this.#settings.privacy !== 'off') {
+            await this.#publish();
+        }
+        return this.reportStatus();
+    }
     async reportStatus() {
         const summary = summarize(this.#state);
         const header = this.#settings.header ?? DEFAULT_HEADER;
         const headerText = this.#renderHeader(header);
         const largeImage = this.#settings.assets.largeImage ?? DEFAULT_LARGE_IMAGE;
+        const smallImage = this.#settings.assets.smallImage ?? '';
         const connection = this.#client?.connected
             ? `connected (${this.#client.socketPath})`
             : (this.#lastError ?? 'not connected');
@@ -363,7 +412,7 @@ class PresenceRuntime {
             [headerText, describeActivity(summary, this.#visibleWorkspaces(summary))]
                 .filter(Boolean)
                 .join(' · '),
-            `logo: ${largeImage || 'off'}`,
+            `logo: ${largeImage || 'off'}${smallImage ? ` · badge: ${smallImage}` : ''}`,
             connection
         ].join('\n');
         await this.#notify('Discord Presence', body);
@@ -376,6 +425,7 @@ class PresenceRuntime {
             header,
             headerText,
             largeImage,
+            smallImage,
             summary,
             lastError: this.#lastError
         };
@@ -458,6 +508,26 @@ function readClientId(configured) {
  */
 function readOptionalString(configured) {
     return typeof configured === 'string' ? configured.trim() : undefined;
+}
+/**
+ * Privacy level handed to the command. Same shapes as the header argument,
+ * since both travel through Orca's `unknown` command argument; anything that
+ * is not a known level means "no argument", which cycles instead.
+ */
+function readPrivacyArg(args) {
+    if (isPrivacyLevel(args)) {
+        return args;
+    }
+    if (typeof args === 'object' && args !== null) {
+        const record = args;
+        for (const key of ['privacy', 'level', 'value']) {
+            const candidate = record[key];
+            if (isPrivacyLevel(candidate)) {
+                return candidate;
+            }
+        }
+    }
+    return undefined;
 }
 /**
  * Header handed to the command. Accepts a bare string or the object shapes a

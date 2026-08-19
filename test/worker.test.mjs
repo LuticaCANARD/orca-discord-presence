@@ -89,6 +89,7 @@ test('activate registers the manifest commands and event handlers', async () => 
   assert.deepEqual(fake.commandIds().sort(), [
     'presence.header',
     'presence.privacy',
+    'presence.reconnect',
     'presence.status',
     'presence.toggle'
   ])
@@ -272,6 +273,64 @@ test('toggle and privacy commands persist their settings', async () => {
   assert.equal(fake.stored.privacy, 'off')
 
   assert.deepEqual(await fake.invoke('presence.privacy'), { privacy: 'full' })
+  await deactivate()
+})
+
+test('the privacy command takes a level argument and persists it', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+
+  assert.deepEqual(await fake.invoke('presence.privacy', 'full'), { privacy: 'full' })
+  assert.equal(fake.stored.privacy, 'full')
+
+  // Object forms a host or automation might send.
+  await fake.invoke('presence.privacy', { privacy: 'off' })
+  assert.equal(fake.stored.privacy, 'off')
+  await fake.invoke('presence.privacy', { level: 'minimal' })
+  assert.equal(fake.stored.privacy, 'minimal')
+
+  // Anything that is not a level means "no argument", which cycles.
+  assert.deepEqual(await fake.invoke('presence.privacy', 'sometimes'), { privacy: 'off' })
+  await deactivate()
+})
+
+test('reconnect reports the connection state instead of throwing', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await settle()
+
+  // Discord is not running here, so the reconnect fails — the command still
+  // has to come back with a report rather than reject.
+  const status = await fake.invoke('presence.reconnect')
+  assert.equal(status.connected, false)
+  assert.equal(status.summary.working, 1)
+  assert.ok(status.lastError, 'expected the failed connect to be reported')
+  await deactivate()
+})
+
+test('a configured badge shows up in the status report', async () => {
+  const fake = createFakeOrca({ settings: { smallImage: 'busy', smallText: 'Fleet busy' } })
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.smallImage, 'busy')
+  await deactivate()
+})
+
+test('no badge is published unless one is configured', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.smallImage, '')
   await deactivate()
 })
 

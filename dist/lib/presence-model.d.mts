@@ -95,8 +95,12 @@ export declare function summarize(state: PresenceState): PresenceSummary;
  */
 export declare function describeWorkspaces(state: PresenceState, summary?: PresenceSummary): string[];
 /**
- * The status line. Ordered by what a reader would want to know first: blocked
- * agents need a human, working agents do not.
+ * The status line. Ordered by what a reader would want to know first: agents
+ * that need a human come before agents that do not.
+ *
+ * `blocked` and `waiting` are separate segments even though Orca renders both
+ * as its `permission` status — the distinction is free here and tells a reader
+ * whether the fleet is stuck or merely asking.
  *
  * `workspaces` names the worktrees the working agents sit in. It is passed only
  * at `full` privacy — at `minimal` the trailing segment stays a bare count, so
@@ -128,6 +132,14 @@ export declare function renderHeader(template: string, { focus, state, privacy }
  * list, so cycling from it starts the presets over from the top.
  */
 export declare function nextHeader(current: string): string;
+export type PresenceAssets = {
+    largeImage?: string | undefined;
+    largeText?: string | undefined;
+    /** Badge in the corner of the logo. Off by default: the shipped application
+     *  hosts no artwork under any other key, so a default would render blank. */
+    smallImage?: string | undefined;
+    smallText?: string | undefined;
+};
 export type BuildActivityInput = {
     state: PresenceState;
     focus: WorkspaceContext;
@@ -135,10 +147,9 @@ export type BuildActivityInput = {
     startedAt?: number;
     /** Leading segment of the details line; `undefined` takes `DEFAULT_HEADER`. */
     header?: string | undefined;
-    assets?: {
-        largeImage?: string;
-        largeText?: string;
-    } | undefined;
+    assets?: PresenceAssets | undefined;
+    /** Opaque party id; omitted, Discord may not render the party size at all. */
+    partyId?: string | undefined;
 };
 /**
  * Builds the payload handed to SET_ACTIVITY. Returns `null` when nothing should
@@ -153,8 +164,16 @@ export type BuildActivityInput = {
  * went from idle to busy, not process start, so the timer reads as "how long
  * this batch of work has been running".
  */
-export declare function buildActivity({ state, focus, privacy, startedAt, header, assets }: BuildActivityInput): DiscordActivity | null;
+export declare function buildActivity({ state, focus, privacy, startedAt, header, assets, partyId }: BuildActivityInput): DiscordActivity | null;
 export declare function isPrivacyLevel(value: unknown): value is PrivacyLevel;
 export declare function nextPrivacy(current: PrivacyLevel): PrivacyLevel;
-/** True when the fleet has any agent that is not finished. */
+/**
+ * True when the fleet has any agent that is not finished.
+ *
+ * `waiting` counts: Orca maps both `blocked` and `waiting` onto its
+ * `permission` status — "agent needs user attention" — so a fleet sitting on a
+ * permission prompt is not idle, and the elapsed timer should keep running.
+ */
 export declare function isBusy(summary: PresenceSummary): boolean;
+/** Agents the fleet still owes work on — the `current` half of the party size. */
+export declare function busyCount(summary: PresenceSummary): number;

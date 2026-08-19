@@ -3,7 +3,7 @@
   "id": "discord-presence",
   "publisher": "lutica-canard",
   "name": "Discord Presence",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Publishes what your Orca agent fleet is doing to your Discord status via local Rich Presence IPC.",
   "author": { "name": "Lutica_CANARD" },
   "repository": "https://github.com/LuticaCANARD/orca-discord-presence",
@@ -12,10 +12,19 @@
   "main": "dist/main.mjs",
   "contributes": {
     "commands": [
-      { "id": "presence.toggle", "title": "Discord Presence: Toggle" },
-      { "id": "presence.privacy", "title": "Discord Presence: Cycle Privacy Level" },
-      { "id": "presence.header", "title": "Discord Presence: Set Header" },
-      { "id": "presence.status", "title": "Discord Presence: Show Connection Status" }
+      { "id": "presence.toggle", "title": "Discord Presence: Toggle", "context": "global" },
+      {
+        "id": "presence.privacy",
+        "title": "Discord Presence: Cycle Privacy Level",
+        "context": "global"
+      },
+      { "id": "presence.header", "title": "Discord Presence: Set Header", "context": "global" },
+      { "id": "presence.reconnect", "title": "Discord Presence: Reconnect", "context": "global" },
+      {
+        "id": "presence.status",
+        "title": "Discord Presence: Show Connection Status",
+        "context": "global"
+      }
     ],
     "events": [
       { "on": "worktree.created" },

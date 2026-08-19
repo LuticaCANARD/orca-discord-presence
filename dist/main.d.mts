@@ -35,6 +35,8 @@ export type PresenceStatusReport = {
     headerText: string;
     /** Art asset key published as the large image; empty when turned off. */
     largeImage: string;
+    /** Art asset key published as the badge; empty unless one is configured. */
+    smallImage: string;
     summary: PresenceSummary;
     lastError: string | null;
 };

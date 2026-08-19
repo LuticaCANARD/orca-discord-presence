@@ -79,10 +79,18 @@ test('capabilities cover exactly what the worker calls', () => {
   assert.ok(!declared.has('terminal:send'))
 })
 
+const COMMAND_CONTEXTS = ['global', 'worktree']
+
 test('command ids are portable and match what main.mjs registers', async () => {
   for (const command of manifest.contributes.commands) {
     assert.match(command.id, COMMAND_ID_RE)
     assert.ok(command.title.length >= 1 && command.title.length <= 256)
+    // `context` is optional upstream and defaults to `global`; declaring it
+    // keeps the palette entry and any user-assigned shortcut unambiguous.
+    assert.ok(
+      COMMAND_CONTEXTS.includes(command.context),
+      `command ${command.id} needs a declared context`
+    )
   }
   const source = readFileSync(fileURLToPath(new URL('../src/main.mts', import.meta.url)), 'utf8')
   for (const command of manifest.contributes.commands) {
@@ -91,6 +99,16 @@ test('command ids are portable and match what main.mjs registers', async () => {
       `manifest declares ${command.id} but main.mjs never registers it`
     )
   }
+})
+
+test('no keybindings are contributed', () => {
+  // Why this is asserted rather than merely absent: `contributes.keybindings`
+  // is instructional content upstream, so declaring even one binds consent to
+  // the plugin's tree hash — every release would then land as "Needs review"
+  // in Settings → Plugins, and a chord colliding with another plugin's
+  // disables *both* plugins' commands. Users bind their own chord under
+  // Settings → Shortcuts → Plugins instead, which costs neither.
+  assert.deepEqual(manifest.contributes.keybindings ?? [], [])
 })
 
 test('subscribed events are all real host events', () => {
