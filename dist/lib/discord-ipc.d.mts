@@ -45,6 +45,18 @@ export type DiscordActivity = {
     assets?: {
         large_image?: string;
         large_text?: string;
+        small_image?: string;
+        small_text?: string;
+    };
+    /**
+     * Renders as `(2 of 5)` beside the status line. `size` is
+     * `[current, max]`; `id` groups a party for join invites, which this plugin
+     * never sends — without a join secret Discord shows no button, so the id is
+     * only ever a per-worker opaque string.
+     */
+    party?: {
+        id?: string;
+        size?: [number, number];
     };
     instance?: boolean;
 };

@@ -285,8 +285,12 @@ function listNames(names: readonly string[]): string {
 }
 
 /**
- * The status line. Ordered by what a reader would want to know first: blocked
- * agents need a human, working agents do not.
+ * The status line. Ordered by what a reader would want to know first: agents
+ * that need a human come before agents that do not.
+ *
+ * `blocked` and `waiting` are separate segments even though Orca renders both
+ * as its `permission` status — the distinction is free here and tells a reader
+ * whether the fleet is stuck or merely asking.
  *
  * `workspaces` names the worktrees the working agents sit in. It is passed only
  * at `full` privacy — at `minimal` the trailing segment stays a bare count, so
@@ -302,6 +306,9 @@ export function describeActivity(
   }
   if (summary.blocked > 0) {
     parts.push(`${summary.blocked} blocked`)
+  }
+  if (summary.waiting > 0) {
+    parts.push(`${summary.waiting} waiting`)
   }
   if (parts.length === 0) {
     return summary.panes > 0 ? 'Fleet idle' : 'No agents running'
@@ -400,6 +407,15 @@ function dedupeSegments(segments: readonly string[]): string[] {
   return kept
 }
 
+export type PresenceAssets = {
+  largeImage?: string | undefined
+  largeText?: string | undefined
+  /** Badge in the corner of the logo. Off by default: the shipped application
+   *  hosts no artwork under any other key, so a default would render blank. */
+  smallImage?: string | undefined
+  smallText?: string | undefined
+}
+
 export type BuildActivityInput = {
   state: PresenceState
   focus: WorkspaceContext
@@ -407,7 +423,9 @@ export type BuildActivityInput = {
   startedAt?: number
   /** Leading segment of the details line; `undefined` takes `DEFAULT_HEADER`. */
   header?: string | undefined
-  assets?: { largeImage?: string; largeText?: string } | undefined
+  assets?: PresenceAssets | undefined
+  /** Opaque party id; omitted, Discord may not render the party size at all. */
+  partyId?: string | undefined
 }
 
 /**
@@ -429,7 +447,8 @@ export function buildActivity({
   privacy,
   startedAt,
   header,
-  assets
+  assets,
+  partyId
 }: BuildActivityInput): DiscordActivity | null {
   if (privacy === 'off') {
     return null
@@ -464,8 +483,44 @@ export function buildActivity({
       activity.assets.large_text = clampField(largeText)
     }
   }
+  // A small image needs a large one to sit on: Discord renders it as a badge in
+  // the logo's corner, and on its own it is simply dropped.
+  const smallImage = assets?.smallImage ?? ''
+  if (largeImage && smallImage) {
+    activity.assets = { ...activity.assets, small_image: smallImage }
+    const smallText = assets?.smallText ?? ''
+    if (smallText) {
+      activity.assets.small_text = clampField(smallText)
+    }
+  }
+  const party = describeParty(summary, partyId)
+  if (party) {
+    activity.party = party
+  }
   activity.instance = false
   return activity
+}
+
+/**
+ * Fleet gauge: Discord renders `size` as `(2 of 5)` next to the status line.
+ *
+ * Counts only, so it says the same thing at `full` and at `minimal` — the
+ * numbers are already in the status line, and neither level would leak a name
+ * through an integer. Omitted when no agent is busy, because `(0 of 3)` reads
+ * as a broken party rather than as an idle fleet.
+ */
+function describeParty(
+  summary: PresenceSummary,
+  partyId: string | undefined
+): { id?: string; size: [number, number] } | null {
+  const busy = busyCount(summary)
+  if (busy <= 0) {
+    return null
+  }
+  // `max` can never be below `current`: a pane can report a status before its
+  // worktree event arrives, and Discord rejects an inverted party size.
+  const size: [number, number] = [busy, Math.max(busy, summary.panes)]
+  return partyId ? { id: partyId, size } : { size }
 }
 
 export function isPrivacyLevel(value: unknown): value is PrivacyLevel {
@@ -477,7 +532,18 @@ export function nextPrivacy(current: PrivacyLevel): PrivacyLevel {
   return PRIVACY_LEVELS[(index + 1) % PRIVACY_LEVELS.length] as PrivacyLevel
 }
 
-/** True when the fleet has any agent that is not finished. */
+/**
+ * True when the fleet has any agent that is not finished.
+ *
+ * `waiting` counts: Orca maps both `blocked` and `waiting` onto its
+ * `permission` status — "agent needs user attention" — so a fleet sitting on a
+ * permission prompt is not idle, and the elapsed timer should keep running.
+ */
 export function isBusy(summary: PresenceSummary): boolean {
-  return summary.working > 0 || summary.blocked > 0
+  return summary.working > 0 || summary.blocked > 0 || summary.waiting > 0
+}
+
+/** Agents the fleet still owes work on — the `current` half of the party size. */
+export function busyCount(summary: PresenceSummary): number {
+  return summary.working + summary.blocked + summary.waiting
 }

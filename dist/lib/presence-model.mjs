@@ -226,8 +226,12 @@ function listNames(names) {
     return `${shown} +${names.length - MAX_WORKSPACE_NAMES}`;
 }
 /**
- * The status line. Ordered by what a reader would want to know first: blocked
- * agents need a human, working agents do not.
+ * The status line. Ordered by what a reader would want to know first: agents
+ * that need a human come before agents that do not.
+ *
+ * `blocked` and `waiting` are separate segments even though Orca renders both
+ * as its `permission` status — the distinction is free here and tells a reader
+ * whether the fleet is stuck or merely asking.
  *
  * `workspaces` names the worktrees the working agents sit in. It is passed only
  * at `full` privacy — at `minimal` the trailing segment stays a bare count, so
@@ -240,6 +244,9 @@ export function describeActivity(summary, workspaces = []) {
     }
     if (summary.blocked > 0) {
         parts.push(`${summary.blocked} blocked`);
+    }
+    if (summary.waiting > 0) {
+        parts.push(`${summary.waiting} waiting`);
     }
     if (parts.length === 0) {
         return summary.panes > 0 ? 'Fleet idle' : 'No agents running';
@@ -340,7 +347,7 @@ function dedupeSegments(segments) {
  * went from idle to busy, not process start, so the timer reads as "how long
  * this batch of work has been running".
  */
-export function buildActivity({ state, focus, privacy, startedAt, header, assets }) {
+export function buildActivity({ state, focus, privacy, startedAt, header, assets, partyId }) {
     if (privacy === 'off') {
         return null;
     }
@@ -371,8 +378,40 @@ export function buildActivity({ state, focus, privacy, startedAt, header, assets
             activity.assets.large_text = clampField(largeText);
         }
     }
+    // A small image needs a large one to sit on: Discord renders it as a badge in
+    // the logo's corner, and on its own it is simply dropped.
+    const smallImage = assets?.smallImage ?? '';
+    if (largeImage && smallImage) {
+        activity.assets = { ...activity.assets, small_image: smallImage };
+        const smallText = assets?.smallText ?? '';
+        if (smallText) {
+            activity.assets.small_text = clampField(smallText);
+        }
+    }
+    const party = describeParty(summary, partyId);
+    if (party) {
+        activity.party = party;
+    }
     activity.instance = false;
     return activity;
+}
+/**
+ * Fleet gauge: Discord renders `size` as `(2 of 5)` next to the status line.
+ *
+ * Counts only, so it says the same thing at `full` and at `minimal` — the
+ * numbers are already in the status line, and neither level would leak a name
+ * through an integer. Omitted when no agent is busy, because `(0 of 3)` reads
+ * as a broken party rather than as an idle fleet.
+ */
+function describeParty(summary, partyId) {
+    const busy = busyCount(summary);
+    if (busy <= 0) {
+        return null;
+    }
+    // `max` can never be below `current`: a pane can report a status before its
+    // worktree event arrives, and Discord rejects an inverted party size.
+    const size = [busy, Math.max(busy, summary.panes)];
+    return partyId ? { id: partyId, size } : { size };
 }
 export function isPrivacyLevel(value) {
     return typeof value === 'string' && PRIVACY_LEVELS.includes(value);
@@ -381,8 +420,18 @@ export function nextPrivacy(current) {
     const index = PRIVACY_LEVELS.indexOf(current);
     return PRIVACY_LEVELS[(index + 1) % PRIVACY_LEVELS.length];
 }
-/** True when the fleet has any agent that is not finished. */
+/**
+ * True when the fleet has any agent that is not finished.
+ *
+ * `waiting` counts: Orca maps both `blocked` and `waiting` onto its
+ * `permission` status — "agent needs user attention" — so a fleet sitting on a
+ * permission prompt is not idle, and the elapsed timer should keep running.
+ */
 export function isBusy(summary) {
-    return summary.working > 0 || summary.blocked > 0;
+    return summary.working > 0 || summary.blocked > 0 || summary.waiting > 0;
+}
+/** Agents the fleet still owes work on — the `current` half of the party size. */
+export function busyCount(summary) {
+    return summary.working + summary.blocked + summary.waiting;
 }
 //# sourceMappingURL=presence-model.mjs.map
