@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createFrameDecoder, encodeFrame, OP } from '../dist/lib/discord-ipc.mjs'
+import {
+  activityCommandArgs,
+  createFrameDecoder,
+  encodeFrame,
+  OP
+} from '../dist/lib/discord-ipc.mjs'
 import { candidateSocketPaths, posixRuntimeBases } from '../dist/lib/socket-path.mjs'
 import {
   applyAgentStatus,
@@ -32,6 +37,18 @@ test('encodeFrame writes an 8-byte little-endian header', () => {
   assert.equal(frame.readInt32LE(0), OP.HANDSHAKE)
   assert.equal(frame.readInt32LE(4), frame.length - 8)
   assert.deepEqual(JSON.parse(frame.subarray(8).toString('utf8')), { v: 1 })
+})
+
+test('clearing an activity keeps the explicit null on the Discord wire', () => {
+  const payload = {
+    cmd: 'SET_ACTIVITY',
+    args: activityCommandArgs(null, 42)
+  }
+  const frame = encodeFrame(OP.FRAME, payload)
+  assert.deepEqual(JSON.parse(frame.subarray(8).toString('utf8')), {
+    cmd: 'SET_ACTIVITY',
+    args: { pid: 42, activity: null }
+  })
 })
 
 test('decoder reassembles a frame split across chunks', () => {

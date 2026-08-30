@@ -123,9 +123,12 @@ class PresenceRuntime {
         this.#schedulePublish();
     }
     #can(capability) {
-        return this.#granted.size === 0 || this.#granted.has(capability);
+        return this.#granted.has(capability);
     }
     async #loadSettings() {
+        if (!this.#can('settings:own')) {
+            return;
+        }
         try {
             const result = await this.#orca.host.call('settings.get');
             const stored = result.settings ?? {};
@@ -147,6 +150,9 @@ class PresenceRuntime {
         }
     }
     async #saveSetting(key, value) {
+        if (!this.#can('settings:own')) {
+            return;
+        }
         try {
             await this.#orca.host.call('settings.set', { key, value });
         }
@@ -155,6 +161,9 @@ class PresenceRuntime {
         }
     }
     async #loadState() {
+        if (!this.#can('storage')) {
+            return;
+        }
         try {
             const stored = await this.#orca.host.call('storage.get', { key: STORAGE_KEY });
             this.#state = pruneStale(deserializeState(stored.value), Date.now());
@@ -166,6 +175,9 @@ class PresenceRuntime {
         }
     }
     async #persistState() {
+        if (!this.#can('storage')) {
+            return;
+        }
         try {
             await this.#orca.host.call('storage.set', {
                 key: STORAGE_KEY,
@@ -180,13 +192,22 @@ class PresenceRuntime {
         if (this.#disposed || !this.#can('workspace:read')) {
             return;
         }
+        const previous = this.#focus;
+        let next;
         try {
-            this.#focus = await this.#orca.host.call('workspace.readContext');
+            next = await this.#orca.host.call('workspace.readContext');
         }
         catch (error) {
             // Non-fatal: without focus context the presence falls back to counts only.
             this.#orca.log(`workspace context unavailable: ${describeError(error)}`);
-            this.#focus = null;
+            next = null;
+        }
+        this.#focus = next;
+        // Orca still has no focus-change plugin event. Polling only helps if a
+        // changed context triggers a publish; otherwise the new workspace sits in
+        // memory until an unrelated agent event happens to arrive.
+        if (this.#settings.privacy === 'full' && !sameFocus(previous, next)) {
+            this.#schedulePublish();
         }
     }
     /** Applies a state mutation, then persists and republishes. */
@@ -214,13 +235,17 @@ class PresenceRuntime {
         const busy = isBusy(summarize(this.#state));
         if (busy && this.#busySince === 0) {
             this.#busySince = Date.now();
-            void this.#orca.host
-                .call('storage.set', { key: STORAGE_STARTED_AT_KEY, value: this.#busySince })
-                .catch(() => { });
+            if (this.#can('storage')) {
+                void this.#orca.host
+                    .call('storage.set', { key: STORAGE_STARTED_AT_KEY, value: this.#busySince })
+                    .catch(() => { });
+            }
         }
         else if (!busy && this.#busySince !== 0) {
             this.#busySince = 0;
-            void this.#orca.host.call('storage.delete', { key: STORAGE_STARTED_AT_KEY }).catch(() => { });
+            if (this.#can('storage')) {
+                void this.#orca.host.call('storage.delete', { key: STORAGE_STARTED_AT_KEY }).catch(() => { });
+            }
         }
     }
     #schedulePublish() {
@@ -236,7 +261,7 @@ class PresenceRuntime {
         this.#publishTimer.unref?.();
     }
     async #publish() {
-        if (this.#disposed || !this.#settings.enabled) {
+        if (this.#disposed || !this.#settings.enabled || this.#settings.privacy === 'off') {
             return;
         }
         if (!this.#settings.clientId) {
@@ -392,11 +417,15 @@ class PresenceRuntime {
         this.#client?.close();
         this.#client = null;
         if (this.#settings.enabled && this.#settings.privacy !== 'off') {
+            await this.#refreshFocus();
             await this.#publish();
         }
         return this.reportStatus();
     }
     async reportStatus() {
+        // The command is an explicit request for current truth; do not make the
+        // user wait for the next 30-second focus poll.
+        await this.#refreshFocus();
         const summary = summarize(this.#state);
         const header = this.#settings.header ?? DEFAULT_HEADER;
         const headerText = this.#renderHeader(header);
@@ -454,6 +483,9 @@ class PresenceRuntime {
         }
     }
     async #notify(title, body) {
+        if (!this.#can('notifications:show')) {
+            return;
+        }
         try {
             await this.#orca.host.call('notifications.show', { title, body });
         }
@@ -491,6 +523,11 @@ class PresenceRuntime {
         this.#client?.close();
         this.#client = null;
     }
+}
+/** Terminals are irrelevant to the card, so they do not make a focus change. */
+function sameFocus(left, right) {
+    return ((left?.displayName.trim() ?? '') === (right?.displayName.trim() ?? '') &&
+        (left?.branch.trim() ?? '') === (right?.branch.trim() ?? ''));
 }
 function describeError(error) {
     return error instanceof Error ? error.message : String(error);

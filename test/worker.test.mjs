@@ -10,13 +10,22 @@ import test from 'node:test'
 
 import activate, { deactivate, DEFAULT_CLIENT_ID } from '../dist/main.mjs'
 
-function createFakeOrca({ settings = {}, capabilities } = {}) {
+function createFakeOrca({
+  settings = {},
+  capabilities,
+  workspace = {
+    branch: 'feat/presence',
+    displayName: 'orca-discord-presence',
+    terminals: []
+  }
+} = {}) {
   const storage = new Map()
   const calls = []
   const commands = new Map()
   const events = new Map()
   const logs = []
   const stored = { ...settings }
+  let focusedWorkspace = workspace
 
   const orca = {
     grantedCapabilities: capabilities ?? [
@@ -52,7 +61,7 @@ function createFakeOrca({ settings = {}, capabilities } = {}) {
             storage.delete(params.key)
             return { ok: true }
           case 'workspace.readContext':
-            return { branch: 'feat/presence', displayName: 'orca-discord-presence', terminals: [] }
+            return focusedWorkspace
           case 'notifications.show':
             return { delivered: true }
           default:
@@ -75,7 +84,10 @@ function createFakeOrca({ settings = {}, capabilities } = {}) {
       }
     },
     invoke: (id, args) => commands.get(id)?.(args),
-    commandIds: () => [...commands.keys()]
+    commandIds: () => [...commands.keys()],
+    setWorkspace: (next) => {
+      focusedWorkspace = next
+    }
   }
 }
 
@@ -235,6 +247,20 @@ test('a workspace header resolves at full privacy and masks at minimal', async (
   await deactivate()
 })
 
+test('status refreshes a changed focused workspace immediately', async () => {
+  const fake = createFakeOrca({
+    settings: { privacy: 'full', header: '{workspace} · {branch}' },
+    workspace: { displayName: 'api', branch: 'main', terminals: [] }
+  })
+  await activate(fake.orca)
+  await settle()
+
+  assert.equal((await fake.invoke('presence.status')).headerText, 'api · main')
+  fake.setWorkspace({ displayName: 'web', branch: 'feat/navigation', terminals: [{ id: 't1' }] })
+  assert.equal((await fake.invoke('presence.status')).headerText, 'web · feat/navigation')
+  await deactivate()
+})
+
 test('agent state is persisted so a reaped worker can rehydrate', async () => {
   const first = createFakeOrca()
   await activate(first.orca)
@@ -344,11 +370,30 @@ test('stored settings are honoured on activate', async () => {
   await deactivate()
 })
 
-test('a narrowed capability grant skips the calls it would fail', async () => {
-  const fake = createFakeOrca({ capabilities: ['events:subscribe', 'storage'] })
+test('a narrowed capability grant skips every host call it cannot make', async () => {
+  const fake = createFakeOrca({ capabilities: ['events:subscribe'] })
   await activate(fake.orca)
   await settle()
-  assert.ok(!fake.calls.some((call) => call.method === 'workspace.readContext'))
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await settle()
+
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.summary.working, 1)
+  assert.deepEqual(fake.calls, [])
+  await deactivate()
+})
+
+test('an explicitly empty capability grant is not treated as full access', async () => {
+  const fake = createFakeOrca({ capabilities: [] })
+  await activate(fake.orca)
+  await settle()
+  await fake.invoke('presence.status')
+  assert.deepEqual(fake.calls, [])
   await deactivate()
 })
 

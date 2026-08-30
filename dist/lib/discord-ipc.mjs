@@ -24,6 +24,16 @@ const HEADER_BYTES = 8;
 const MAX_PAYLOAD_BYTES = 1024 * 1024;
 const CONNECT_TIMEOUT_MS = 5_000;
 const READY_TIMEOUT_MS = 10_000;
+/**
+ * Arguments for Discord's SET_ACTIVITY command.
+ *
+ * `null` must survive JSON serialization: it is the protocol's explicit
+ * "clear this process' activity" value. Omitting the property leaves Discord
+ * free to retain the previous card.
+ */
+export function activityCommandArgs(activity, pid = process.pid) {
+    return { pid, activity };
+}
 export function encodeFrame(op, payload) {
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
     const frame = Buffer.allocUnsafe(HEADER_BYTES + body.length);
@@ -260,7 +270,7 @@ export class DiscordPresenceClient {
     }
     /** `activity: null` clears the status without dropping the connection. */
     setActivity(activity) {
-        return this.#command('SET_ACTIVITY', { pid: process.pid, activity: activity ?? undefined });
+        return this.#command('SET_ACTIVITY', activityCommandArgs(activity));
     }
     close() {
         const socket = this.#socket;

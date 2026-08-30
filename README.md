@@ -20,7 +20,7 @@ TypeScript, no runtime dependencies — the Discord Rich Presence IPC protocol i
 
 ## Requirements
 
-- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.185`, see [Compatibility](#compatibility)
+- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.192`, see [Compatibility](#compatibility)
 - The Discord **desktop** app running on the same machine (the web client exposes no local IPC socket)
 
 Nothing else. The plugin ships with a Discord application id and starts publishing as soon as an agent does something.
@@ -157,7 +157,11 @@ Every key is optional, and `""` means *off* rather than *default*. Restart Orca,
 
 ## Compatibility
 
-Last checked against Orca `v1.4.185`, the newest release, and against `main` (which carries its own `1.4.178-rc.2` version — the release line and `main` number themselves separately). Every file below is byte-identical between the two, so "unchanged" means unchanged in both. The engine floor stays `>=1.4.0`: nothing this plugin depends on has moved since the plugin system landed.
+Checked on 2026-08-30 against every stable desktop release after the previous `v1.4.185` checkpoint: [`v1.4.186`](https://github.com/stablyai/orca/releases/tag/v1.4.186), [`v1.4.187`](https://github.com/stablyai/orca/releases/tag/v1.4.187), [`v1.4.188`](https://github.com/stablyai/orca/releases/tag/v1.4.188), [`v1.4.190`](https://github.com/stablyai/orca/releases/tag/v1.4.190), [`v1.4.191`](https://github.com/stablyai/orca/releases/tag/v1.4.191), and the latest [`v1.4.192`](https://github.com/stablyai/orca/releases/tag/v1.4.192). There was no stable `v1.4.189` release.
+
+Those releases substantially improved agent-status correctness, worktree identity across hosts, remote/SSH recovery, terminal sessions, native chat, automations, and WSL behavior. The presence benefits from the corrected events automatically. Orca also added an internal `workingMode: "monitoring"`, but the plugin event remains a deliberately bounded four-field projection, so this plugin cannot distinguish foreground work from background monitoring yet.
+
+The ten upstream files this plugin depends on are byte-identical at `v1.4.185`, `v1.4.192`, and Orca `main` commit `d607a63670d504763262daa9df335baac4eea8be` observed on 2026-08-30. `main` still carries its independent `1.4.178-rc.2` package version, so source identity—not that package number—is the useful comparison. The engine floor stays `>=1.4.0`: no public plugin contract used here has moved since the plugin system landed.
 
 Re-read upstream and found unchanged — these are the contracts `src/lib/orca-api.mts` transcribes:
 
@@ -166,11 +170,13 @@ Re-read upstream and found unchanged — these are the contracts `src/lib/orca-a
 | Host API v0 method table (`plugin-host-api.ts`) | 13 methods, all still `experimental`; `workspace.readContext` still returns `{ branch, displayName, terminals }` |
 | Event set (`plugin-events.ts`) | Still the three worktree/agent events — no focus-change event |
 | Capability kinds (`plugin-capabilities.ts`) | Still seven unscoped kinds; still no `net:*` |
-| Agent states (`agent-status-types.ts`) | Still `working` / `blocked` / `waiting` / `done`; the file's churn between the two versions is internal (observation metadata, per-turn timestamps) and never reaches the event payload |
+| Agent states (`agent-status-types.ts`) | Still `working` / `blocked` / `waiting` / `done`; new internal monitoring and per-turn fields do not reach the plugin event payload |
 | Worker environment (`plugin-worker-env.ts`) | Still an allowlist without `XDG_RUNTIME_DIR` |
 | Idle reap (`plugin-host-protocol.ts`) | Still 5 minutes |
 | Settings and storage location | Still `<userData>/plugins-data/<publisher>.<id>/` |
-| Manifest and marketplace schemas | Unchanged; `commands[].context` is now declared here |
+| Manifest and marketplace schemas | Unchanged; `commands[].context` is declared here |
+
+`orca-compatibility.json` records the reviewed Git blob ids. The read-only **Orca compatibility** workflow checks the latest stable release and `main` every Monday; it fails on any new stable version—even if the files are unchanged—or on contract drift in either ref, forcing this section and the handwritten API types to be reviewed. Run the same check locally with `npm run check:orca-compatibility` (network access to the public GitHub API is required).
 
 Contribution kinds the manifest could carry and deliberately does not:
 
@@ -183,9 +189,9 @@ Contribution kinds the manifest could carry and deliberately does not:
 
 **The status is ephemeral by design.** Orca reaps a plugin worker after 5 minutes with no in-flight work (`PLUGIN_WORKER_IDLE_REAP_MS`) and re-forks it on the next event. A worker cannot keep itself alive — only host→worker traffic refreshes the idle clock. So the presence appears while your fleet is active, disappears after a few quiet minutes, and returns on the next agent event. Fleet state is persisted to plugin storage so nothing is lost across the gap, and statuses older than six hours are dropped rather than rehydrated as if still live.
 
-**The focused workspace is polled, not pushed.** Orca emits no focus-change event, so `full` privacy refreshes the workspace and branch every 30 seconds. Switching worktrees can take that long to show up.
+**The focused workspace is polled, not pushed.** Orca emits no focus-change event, so `full` privacy refreshes and republishes the workspace and branch every 30 seconds. **Show Connection Status** and **Reconnect** refresh it immediately.
 
-**Command arguments depend on the host.** **Set Header** accepts a string or `{ header }`, and **Cycle Privacy Level** a level or `{ privacy }`, when Orca passes an argument through. As of `1.4.185` no host path does: the palette and recorded shortcuts both invoke commands with no argument, even though the IPC carries one. Until that changes the cycles are the whole interface, and free-form headers go in the settings file.
+**Command arguments depend on the host.** **Set Header** accepts a string or `{ header }`, and **Cycle Privacy Level** a level or `{ privacy }`, when Orca passes an argument through. As of `1.4.192` no host path does: the palette and recorded shortcuts both invoke commands with no argument, even though the IPC carries one. Until that changes the cycles are the whole interface, and free-form headers go in the settings file.
 
 **Linux socket discovery is heuristic.** Orca's worker environment is an allowlist that omits `XDG_RUNTIME_DIR`, so `/run/user/<uid>` is reconstructed from `process.getuid()`. Flatpak and Snap layouts are probed too.
 
@@ -202,7 +208,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (73 tests)
+npm test           # build + node --test (80 tests)
 npm run typecheck  # no emit
 ```
 
@@ -211,6 +217,9 @@ Settings → Plugins → *Add development plugin* and pick the checkout director
 ```text
 orca-plugin.json            manifest (validated against the host schema by a test)
 orca-marketplace.json       marketplace index — lets this repo be its own source
+orca-compatibility.json     reviewed Orca release and plugin-contract object ids
+scripts/check-orca-compatibility.mjs
+                            latest-release and main contract drift check
 src/main.mts                worker entry: activate/deactivate, commands, events
 src/lib/orca-api.mts        hand-maintained types for Orca's plugin worker API
 src/lib/presence-model.mts  pure state model — events in, activity payload out
