@@ -65,6 +65,20 @@ export type DiscordActivity = {
   instance?: boolean
 }
 
+/**
+ * Arguments for Discord's SET_ACTIVITY command.
+ *
+ * `null` must survive JSON serialization: it is the protocol's explicit
+ * "clear this process' activity" value. Omitting the property leaves Discord
+ * free to retain the previous card.
+ */
+export function activityCommandArgs(
+  activity: DiscordActivity | null,
+  pid: number = process.pid
+): { pid: number; activity: DiscordActivity | null } {
+  return { pid, activity }
+}
+
 export function encodeFrame(op: number, payload: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(payload), 'utf8')
   const frame = Buffer.allocUnsafe(HEADER_BYTES + body.length)
@@ -328,7 +342,7 @@ export class DiscordPresenceClient {
 
   /** `activity: null` clears the status without dropping the connection. */
   setActivity(activity: DiscordActivity | null): Promise<unknown> {
-    return this.#command('SET_ACTIVITY', { pid: process.pid, activity: activity ?? undefined })
+    return this.#command('SET_ACTIVITY', activityCommandArgs(activity))
   }
 
   close(): void {

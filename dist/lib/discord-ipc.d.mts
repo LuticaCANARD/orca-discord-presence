@@ -60,6 +60,17 @@ export type DiscordActivity = {
     };
     instance?: boolean;
 };
+/**
+ * Arguments for Discord's SET_ACTIVITY command.
+ *
+ * `null` must survive JSON serialization: it is the protocol's explicit
+ * "clear this process' activity" value. Omitting the property leaves Discord
+ * free to retain the previous card.
+ */
+export declare function activityCommandArgs(activity: DiscordActivity | null, pid?: number): {
+    pid: number;
+    activity: DiscordActivity | null;
+};
 export declare function encodeFrame(op: number, payload: unknown): Buffer;
 /**
  * Streaming frame decoder. Returns a `push(chunk)` that yields whole frames and
