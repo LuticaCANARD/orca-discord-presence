@@ -44,9 +44,28 @@ async function githubJson(path) {
   const response = await fetch(`${API_ROOT}${path}`, { headers: requestHeaders() })
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500)
-    throw new Error(`GitHub API ${response.status} for ${path}: ${detail}`)
+    throw new Error(
+      `GitHub API ${response.status} for ${path}: ${detail}${hintFor(response.status)}`
+    )
   }
   return response.json()
+}
+
+/**
+ * The two ways this check fails for reasons that have nothing to do with
+ * upstream: a token the API rejects, and no token at all on a shared address
+ * whose unauthenticated budget is already spent. Both read as "compatibility
+ * broke" unless the message says otherwise.
+ */
+function hintFor(status) {
+  const authenticated = Boolean(process.env['GITHUB_TOKEN']?.trim())
+  if (status === 401 && authenticated) {
+    return '\nGITHUB_TOKEN was rejected. Unset it to try unauthenticated, or supply a valid token.'
+  }
+  if (status === 403 && !authenticated) {
+    return '\nUnauthenticated requests are rate limited per address. Set GITHUB_TOKEN and retry.'
+  }
+  return ''
 }
 
 async function objectIdsAtRef(repository, ref, paths) {

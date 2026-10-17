@@ -8,6 +8,11 @@ const baseline = JSON.parse(
   await readFile(new URL('../orca-compatibility.json', import.meta.url), 'utf8')
 )
 
+function nextPatchRelease(release) {
+  const [major, minor, patch] = release.replace(/^v/, '').split('.')
+  return `v${major}.${minor}.${Number(patch) + 1}`
+}
+
 function matchingSnapshot() {
   return {
     latestRelease: baseline.verifiedRelease,
@@ -34,9 +39,11 @@ test('an unchanged release and main pass the compatibility assessment', () => {
 
 test('a new stable release requires review even when the contracts match', () => {
   const snapshot = matchingSnapshot()
-  snapshot.latestRelease = 'v1.4.193'
+  // Derived from the baseline, not hardcoded: pinning a literal here makes the
+  // test fail on the next review for a reason that has nothing to do with it.
+  snapshot.latestRelease = nextPatchRelease(baseline.verifiedRelease)
   assert.deepEqual(assessCompatibility(baseline, snapshot), [
-    'latest stable release is v1.4.193; reviewed baseline is v1.4.192'
+    `latest stable release is ${snapshot.latestRelease}; reviewed baseline is ${baseline.verifiedRelease}`
   ])
 })
 

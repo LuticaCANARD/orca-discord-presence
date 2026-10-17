@@ -342,6 +342,46 @@ test('reconnect reports the connection state instead of throwing', async () => {
   await deactivate()
 })
 
+test('the report carries the host-stamped start of the current work', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+
+  const startedAt = Date.now() - 600_000
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'working',
+    receivedAt: Date.now(),
+    mainAgent: { state: 'working', stateStartedAt: startedAt }
+  })
+  await settle()
+
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.busySince, startedAt, 'the ten-minute-old start wins over "just noticed"')
+  assert.equal(status.busySinceFromHost, true)
+  assert.equal(status.summary.wrappingUp, 0)
+  await deactivate()
+})
+
+test('a host with no main-agent fact falls back to local observation', async () => {
+  const fake = createFakeOrca()
+  await activate(fake.orca)
+  await settle()
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await settle()
+
+  const status = await fake.invoke('presence.status')
+  assert.ok(status.busySince > 0, 'the fleet is busy, so the timer has a start')
+  assert.equal(status.busySinceFromHost, false)
+  await deactivate()
+})
+
 test('a configured badge shows up in the status report', async () => {
   const fake = createFakeOrca({ settings: { smallImage: 'busy', smallText: 'Fleet busy' } })
   await activate(fake.orca)

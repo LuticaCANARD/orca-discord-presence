@@ -19,6 +19,7 @@ import type {
   WorkspaceContext
 } from './lib/orca-api.mjs'
 import {
+  busyAnchor,
   DEFAULT_HEADER,
   DEFAULT_LARGE_IMAGE,
   DEFAULT_PRIVACY,
@@ -36,6 +37,7 @@ import {
   nextPrivacy,
   renderHeader,
   pruneStale,
+  RECENT_FAILURE_MS,
   serializeState,
   summarize,
   type PresenceAssets,
@@ -94,6 +96,10 @@ export type PresenceStatusReport = {
   /** Art asset key published as the badge; empty unless one is configured. */
   smallImage: string
   summary: PresenceSummary
+  /** What Discord's elapsed timer counts from; 0 while the fleet is idle. */
+  busySince: number
+  /** True when the host's own start stamp won over this worker's observation. */
+  busySinceFromHost: boolean
   lastError: string | null
 }
 
@@ -350,7 +356,9 @@ class PresenceRuntime {
       state: this.#state,
       focus: this.#focus,
       privacy: this.#settings.privacy,
-      startedAt: this.#busySince,
+      // The host's own start stamp wins over the moment this worker noticed the
+      // fleet go busy — see `busyAnchor`. The local stamp stays the fallback.
+      startedAt: busyAnchor(this.#state, this.#busySince),
       header: this.#settings.header,
       assets: this.#settings.assets,
       partyId: this.#partyId
@@ -515,6 +523,7 @@ class PresenceRuntime {
     // user wait for the next 30-second focus poll.
     await this.#refreshFocus()
     const summary = summarize(this.#state)
+    const busySince = busyAnchor(this.#state, this.#busySince)
     const header = this.#settings.header ?? DEFAULT_HEADER
     const headerText = this.#renderHeader(header)
     const largeImage = this.#settings.assets.largeImage ?? DEFAULT_LARGE_IMAGE
@@ -530,6 +539,14 @@ class PresenceRuntime {
         .filter(Boolean)
         .join(' · '),
       `logo: ${largeImage || 'off'}${smallImage ? ` · badge: ${smallImage}` : ''}`,
+      // Only when there is something to say: the status line leaves failures
+      // out on purpose, and this is where they are actionable.
+      ...(summary.recentFailures > 0
+        ? [
+            `${summary.recentFailures} turn${summary.recentFailures === 1 ? '' : 's'} ended badly` +
+              ` in the last ${RECENT_FAILURE_MS / 60_000} minutes`
+          ]
+        : []),
       connection
     ].join('\n')
     await this.#notify('Discord Presence', body)
@@ -544,6 +561,8 @@ class PresenceRuntime {
       largeImage,
       smallImage,
       summary,
+      busySince,
+      busySinceFromHost: busySince !== this.#busySince,
       lastError: this.#lastError
     }
   }

@@ -15,10 +15,20 @@
 import { basename } from 'node:path'
 // Type-only, so the model still pulls in no IPC code at runtime.
 import type { DiscordActivity } from './discord-ipc.mjs'
-import type { AgentStatusState, WorkspaceContext } from './orca-api.mjs'
+import type { AgentStatusState, AgentTurnOutcome, WorkspaceContext } from './orca-api.mjs'
 
 /** Orca's agent states, from `AGENT_STATUS_STATES` in the host. */
 export const AGENT_STATES: readonly AgentStatusState[] = ['working', 'blocked', 'waiting', 'done']
+
+/** `AGENT_TURN_OUTCOMES`. An outcome outside this set is treated as unknown. */
+export const TURN_OUTCOMES: readonly AgentTurnOutcome[] = [
+  'success',
+  'failure',
+  'cancellation',
+  'superseded',
+  'interruption',
+  'unconfirmed'
+]
 
 export const PRIVACY_LEVELS = ['full', 'minimal', 'off'] as const
 export type PrivacyLevel = (typeof PRIVACY_LEVELS)[number]
@@ -90,8 +100,49 @@ const FIELD_MAX = 128
  */
 export const STALE_STATUS_MS = 6 * 60 * 60 * 1000
 
+/**
+ * How long a turn that ended badly keeps counting. Done panes live for
+ * `STALE_STATUS_MS`, which is far too long for "something just failed" — a
+ * failure from this morning is history, not status.
+ */
+export const RECENT_FAILURE_MS = 30 * 60 * 1000
+
+/**
+ * Outcomes that count as a turn ending badly. `cancellation` and `superseded`
+ * are stops somebody asked for, and `unconfirmed` only means the host could not
+ * prove how the turn ended — none of them is a fault worth reporting.
+ */
+const FAILED_OUTCOMES: readonly AgentTurnOutcome[] = ['failure', 'interruption']
+
+/**
+ * Window around now in which a host-stamped `stateStartedAt` is believed.
+ *
+ * The stamp comes from the machine the agent runs on, which for an SSH host is
+ * not this one, so a skewed clock could otherwise anchor Discord's timer in the
+ * future or days back. Outside these bounds the locally observed idle→busy
+ * moment is used instead.
+ */
+export const START_STAMP_MAX_AGE_MS = 24 * 60 * 60 * 1000
+export const START_STAMP_MAX_SKEW_MS = 60 * 1000
+
 export type WorktreeRecord = { path: string; branch: string }
-export type PaneRecord = { worktreeId: string | null; state: AgentStatusState; receivedAt: number }
+
+/**
+ * One pane's last known status. `state` is Orca's *combined* state — `working`
+ * covers a live subagent whose main agent has already settled — so the main
+ * agent's own facts are kept beside it rather than folded in.
+ */
+export type PaneRecord = {
+  worktreeId: string | null
+  state: AgentStatusState
+  receivedAt: number
+  /** The main agent's own state; absent on hosts that do not report it. */
+  mainState?: AgentStatusState
+  /** Verdict on the main agent's last finished turn; absent means unknown. */
+  outcome?: AgentTurnOutcome
+  /** Host-stamped start of the main agent's own state, in ms. */
+  startedAt?: number
+}
 
 export type PresenceState = {
   worktrees: Map<string, WorktreeRecord>
@@ -108,6 +159,14 @@ export type PresenceSummary = {
   activeWorktrees: number
   /** Ids of the worktrees with a working agent, sorted so payloads stay stable. */
   activeWorktreeIds: string[]
+  /**
+   * Panes that read `working` only because a subagent outlived the main agent.
+   * A subset of `working`, never added to it: the pane is still busy, but no
+   * main agent is driving it any more.
+   */
+  wrappingUp: number
+  /** Main agents whose last turn failed or died, within `RECENT_FAILURE_MS`. */
+  recentFailures: number
 }
 
 export function createPresenceState(): PresenceState {
@@ -124,6 +183,10 @@ function asString(value: unknown): string {
 
 function isAgentState(value: unknown): value is AgentStatusState {
   return typeof value === 'string' && (AGENT_STATES as readonly string[]).includes(value)
+}
+
+function isTurnOutcome(value: unknown): value is AgentTurnOutcome {
+  return typeof value === 'string' && (TURN_OUTCOMES as readonly string[]).includes(value)
 }
 
 export function applyWorktreeCreated(state: PresenceState, payload: unknown): PresenceState {
@@ -166,9 +229,33 @@ export function applyAgentStatus(state: PresenceState, payload: unknown): Presen
   state.panes.set(paneKey, {
     worktreeId: typeof worktreeId === 'string' ? worktreeId : null,
     state: agentState,
-    receivedAt: typeof receivedAt === 'number' ? receivedAt : 0
+    receivedAt: typeof receivedAt === 'number' ? receivedAt : 0,
+    ...readMainAgent(record?.['mainAgent'])
   })
   return state
+}
+
+/**
+ * The main agent's own facts, when the host sends them. Each field is kept out
+ * of the record entirely when absent or unusable, so "this host does not report
+ * it" and "this host reported nonsense" degrade to the same thing: the combined
+ * state, which every host has.
+ */
+function readMainAgent(value: unknown): Pick<PaneRecord, 'mainState' | 'outcome' | 'startedAt'> {
+  const record = asRecord(value)
+  if (!record) {
+    return {}
+  }
+  const mainState = record['state']
+  const outcome = record['outcome']
+  const startedAt = record['stateStartedAt']
+  return {
+    ...(isAgentState(mainState) ? { mainState } : {}),
+    ...(isTurnOutcome(outcome) ? { outcome } : {}),
+    ...(typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt > 0
+      ? { startedAt }
+      : {})
+  }
 }
 
 export function pruneStale(state: PresenceState, now: number): PresenceState {
@@ -211,20 +298,43 @@ export function deserializeState(raw: unknown): PresenceState {
       state.panes.set(paneKey, {
         worktreeId: typeof worktreeId === 'string' ? worktreeId : null,
         state: record['state'],
-        receivedAt: typeof receivedAt === 'number' ? receivedAt : 0
+        receivedAt: typeof receivedAt === 'number' ? receivedAt : 0,
+        // Storage is re-read through the event's own reader, under the field
+        // names it serialized: one validation path, and a record written by an
+        // older version of the plugin simply carries less.
+        ...readMainAgent({
+          state: record['mainState'],
+          outcome: record['outcome'],
+          stateStartedAt: record['startedAt']
+        })
       })
     }
   }
   return state
 }
 
-export function summarize(state: PresenceState): PresenceSummary {
+export function summarize(state: PresenceState, now: number = Date.now()): PresenceSummary {
   const counts: Record<AgentStatusState, number> = { working: 0, blocked: 0, waiting: 0, done: 0 }
   const activeWorktrees = new Set<string>()
+  let wrappingUp = 0
+  let recentFailures = 0
   for (const pane of state.panes.values()) {
     counts[pane.state] += 1
     if (pane.state === 'working' && pane.worktreeId) {
       activeWorktrees.add(pane.worktreeId)
+    }
+    // Combined `working` with a settled main agent means the pane is being held
+    // open by a subagent. A host that reports no main-agent state says nothing
+    // either way, so the pane stays a plain working agent.
+    if (pane.state === 'working' && pane.mainState === 'done') {
+      wrappingUp += 1
+    }
+    if (
+      pane.outcome !== undefined &&
+      FAILED_OUTCOMES.includes(pane.outcome) &&
+      now - pane.receivedAt <= RECENT_FAILURE_MS
+    ) {
+      recentFailures += 1
     }
   }
   return {
@@ -235,8 +345,49 @@ export function summarize(state: PresenceState): PresenceSummary {
     // Sorted, not insertion-ordered: pane events arrive in whatever order the
     // fleet happens to emit them, and an unstable order would republish an
     // otherwise identical payload against the rate limit.
-    activeWorktreeIds: [...activeWorktrees].sort()
+    activeWorktreeIds: [...activeWorktrees].sort(),
+    wrappingUp,
+    recentFailures
   }
+}
+
+/**
+ * When the fleet's current stretch of work began, for Discord's elapsed timer.
+ *
+ * Prefers the host's own `stateStartedAt` over `fallback`, the moment this
+ * plugin first *noticed* the fleet go busy, because the two differ exactly when
+ * it matters: the worker is re-forked after an idle reap, or the plugin was
+ * enabled while agents were already running. Only panes whose main agent is
+ * itself busy count — a pane held open by a subagent has a stamp that dates the
+ * main agent's `done`, which is not when the work started.
+ *
+ * Returns `fallback` when no stamp is usable, so an older host behaves exactly
+ * as before.
+ */
+export function busyAnchor(
+  state: PresenceState,
+  fallback: number,
+  now: number = Date.now()
+): number {
+  let earliest = 0
+  for (const pane of state.panes.values()) {
+    if (pane.state === 'done' || pane.mainState === 'done' || pane.startedAt === undefined) {
+      continue
+    }
+    const stamp = pane.startedAt
+    if (stamp > now + START_STAMP_MAX_SKEW_MS || now - stamp > START_STAMP_MAX_AGE_MS) {
+      continue
+    }
+    if (earliest === 0 || stamp < earliest) {
+      earliest = stamp
+    }
+  }
+  if (earliest === 0) {
+    return fallback
+  }
+  // A stamp from a clock a little ahead of this one would otherwise publish a
+  // timer counting down from the future.
+  return Math.min(earliest, now)
 }
 
 function plural(count: number, noun: string): string {
@@ -290,7 +441,12 @@ function listNames(names: readonly string[]): string {
  *
  * `blocked` and `waiting` are separate segments even though Orca renders both
  * as its `permission` status — the distinction is free here and tells a reader
- * whether the fleet is stuck or merely asking.
+ * whether the fleet is stuck or merely asking. `wrapping up` is the tail of a
+ * pane whose main agent has settled while a subagent still runs.
+ *
+ * Turns that ended badly are deliberately absent: a failure count on a public
+ * profile would be noise minutes after it stopped being news, and **Show
+ * Connection Status** reports it where it is actionable.
  *
  * `workspaces` names the worktrees the working agents sit in. It is passed only
  * at `full` privacy — at `minimal` the trailing segment stays a bare count, so
@@ -301,14 +457,21 @@ export function describeActivity(
   workspaces: readonly string[] = []
 ): string {
   const parts: string[] = []
-  if (summary.working > 0) {
-    parts.push(`${plural(summary.working, 'agent')} working`)
+  // `wrappingUp` is a subset of `working`, so it is subtracted rather than
+  // added: three working panes of which one is held open by a subagent read as
+  // "2 agents working · 1 wrapping up", never as four agents.
+  const driving = summary.working - summary.wrappingUp
+  if (driving > 0) {
+    parts.push(`${plural(driving, 'agent')} working`)
   }
   if (summary.blocked > 0) {
     parts.push(`${summary.blocked} blocked`)
   }
   if (summary.waiting > 0) {
     parts.push(`${summary.waiting} waiting`)
+  }
+  if (summary.wrappingUp > 0) {
+    parts.push(`${summary.wrappingUp} wrapping up`)
   }
   if (parts.length === 0) {
     return summary.panes > 0 ? 'Fleet idle' : 'No agents running'

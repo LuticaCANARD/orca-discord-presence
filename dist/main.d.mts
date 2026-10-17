@@ -38,6 +38,10 @@ export type PresenceStatusReport = {
     /** Art asset key published as the badge; empty unless one is configured. */
     smallImage: string;
     summary: PresenceSummary;
+    /** What Discord's elapsed timer counts from; 0 while the fleet is idle. */
+    busySince: number;
+    /** True when the host's own start stamp won over this worker's observation. */
+    busySinceFromHost: boolean;
     lastError: string | null;
 };
 export default function activate(orca: OrcaPluginApi): void;

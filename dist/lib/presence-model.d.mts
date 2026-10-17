@@ -12,9 +12,11 @@
  * to reason about than two.
  */
 import type { DiscordActivity } from './discord-ipc.mjs';
-import type { AgentStatusState, WorkspaceContext } from './orca-api.mjs';
+import type { AgentStatusState, AgentTurnOutcome, WorkspaceContext } from './orca-api.mjs';
 /** Orca's agent states, from `AGENT_STATUS_STATES` in the host. */
 export declare const AGENT_STATES: readonly AgentStatusState[];
+/** `AGENT_TURN_OUTCOMES`. An outcome outside this set is treated as unknown. */
+export declare const TURN_OUTCOMES: readonly AgentTurnOutcome[];
 export declare const PRIVACY_LEVELS: readonly ['full', 'minimal', 'off'];
 export type PrivacyLevel = (typeof PRIVACY_LEVELS)[number];
 /**
@@ -50,14 +52,41 @@ export declare const DEFAULT_LARGE_TEXT = "Orca";
  * a fleet that was busy yesterday would still read as busy today.
  */
 export declare const STALE_STATUS_MS: number;
+/**
+ * How long a turn that ended badly keeps counting. Done panes live for
+ * `STALE_STATUS_MS`, which is far too long for "something just failed" — a
+ * failure from this morning is history, not status.
+ */
+export declare const RECENT_FAILURE_MS: number;
+/**
+ * Window around now in which a host-stamped `stateStartedAt` is believed.
+ *
+ * The stamp comes from the machine the agent runs on, which for an SSH host is
+ * not this one, so a skewed clock could otherwise anchor Discord's timer in the
+ * future or days back. Outside these bounds the locally observed idle→busy
+ * moment is used instead.
+ */
+export declare const START_STAMP_MAX_AGE_MS: number;
+export declare const START_STAMP_MAX_SKEW_MS: number;
 export type WorktreeRecord = {
     path: string;
     branch: string;
 };
+/**
+ * One pane's last known status. `state` is Orca's *combined* state — `working`
+ * covers a live subagent whose main agent has already settled — so the main
+ * agent's own facts are kept beside it rather than folded in.
+ */
 export type PaneRecord = {
     worktreeId: string | null;
     state: AgentStatusState;
     receivedAt: number;
+    /** The main agent's own state; absent on hosts that do not report it. */
+    mainState?: AgentStatusState;
+    /** Verdict on the main agent's last finished turn; absent means unknown. */
+    outcome?: AgentTurnOutcome;
+    /** Host-stamped start of the main agent's own state, in ms. */
+    startedAt?: number;
 };
 export type PresenceState = {
     worktrees: Map<string, WorktreeRecord>;
@@ -73,6 +102,14 @@ export type PresenceSummary = {
     activeWorktrees: number;
     /** Ids of the worktrees with a working agent, sorted so payloads stay stable. */
     activeWorktreeIds: string[];
+    /**
+     * Panes that read `working` only because a subagent outlived the main agent.
+     * A subset of `working`, never added to it: the pane is still busy, but no
+     * main agent is driving it any more.
+     */
+    wrappingUp: number;
+    /** Main agents whose last turn failed or died, within `RECENT_FAILURE_MS`. */
+    recentFailures: number;
 };
 export declare function createPresenceState(): PresenceState;
 export declare function applyWorktreeCreated(state: PresenceState, payload: unknown): PresenceState;
@@ -85,7 +122,21 @@ export declare function serializeState(state: PresenceState): {
     panes: Record<string, PaneRecord>;
 };
 export declare function deserializeState(raw: unknown): PresenceState;
-export declare function summarize(state: PresenceState): PresenceSummary;
+export declare function summarize(state: PresenceState, now?: number): PresenceSummary;
+/**
+ * When the fleet's current stretch of work began, for Discord's elapsed timer.
+ *
+ * Prefers the host's own `stateStartedAt` over `fallback`, the moment this
+ * plugin first *noticed* the fleet go busy, because the two differ exactly when
+ * it matters: the worker is re-forked after an idle reap, or the plugin was
+ * enabled while agents were already running. Only panes whose main agent is
+ * itself busy count — a pane held open by a subagent has a stamp that dates the
+ * main agent's `done`, which is not when the work started.
+ *
+ * Returns `fallback` when no stamp is usable, so an older host behaves exactly
+ * as before.
+ */
+export declare function busyAnchor(state: PresenceState, fallback: number, now?: number): number;
 /**
  * Names of the workspaces (worktrees) that currently have a working agent.
  *
@@ -100,7 +151,12 @@ export declare function describeWorkspaces(state: PresenceState, summary?: Prese
  *
  * `blocked` and `waiting` are separate segments even though Orca renders both
  * as its `permission` status — the distinction is free here and tells a reader
- * whether the fleet is stuck or merely asking.
+ * whether the fleet is stuck or merely asking. `wrapping up` is the tail of a
+ * pane whose main agent has settled while a subagent still runs.
+ *
+ * Turns that ended badly are deliberately absent: a failure count on a public
+ * profile would be noise minutes after it stopped being news, and **Show
+ * Connection Status** reports it where it is actionable.
  *
  * `workspaces` names the worktrees the working agents sit in. It is passed only
  * at `full` privacy — at `minimal` the trailing segment stays a bare count, so

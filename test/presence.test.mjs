@@ -13,6 +13,7 @@ import {
   applyWorktreeCreated,
   applyWorktreeRemoved,
   buildActivity,
+  busyAnchor,
   busyCount,
   createPresenceState,
   DEFAULT_HEADER,
@@ -26,9 +27,11 @@ import {
   nextHeader,
   nextPrivacy,
   pruneStale,
+  RECENT_FAILURE_MS,
   renderHeader,
   serializeState,
   STALE_STATUS_MS,
+  START_STAMP_MAX_AGE_MS,
   summarize
 } from '../dist/lib/presence-model.mjs'
 
@@ -200,6 +203,194 @@ test('a fleet waiting on the user is not idle', () => {
 
   applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'done', receivedAt: 1 })
   assert.equal(isBusy(summarize(state)), false)
+})
+
+test('a pane held open by a subagent reads as wrapping up, not working', () => {
+  // Orca's `state` is the combined status: `working` covers a live subagent
+  // whose main agent has already settled. `mainAgent.state` is what separates
+  // the two, and the counts must not double up.
+  const now = Date.now()
+  const state = createPresenceState()
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'working', stateStartedAt: now - 60_000 }
+  })
+  applyAgentStatus(state, {
+    paneKey: 'b',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'done', outcome: 'success', stateStartedAt: now - 10_000 }
+  })
+
+  const summary = summarize(state, now)
+  assert.equal(summary.working, 2, 'both panes are busy by the combined state')
+  assert.equal(summary.wrappingUp, 1)
+  assert.equal(busyCount(summary), 2)
+  assert.equal(describeActivity(summary), '1 agent working · 1 wrapping up')
+
+  // Every working pane wrapping up leaves no "working" segment at all.
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'done', stateStartedAt: now }
+  })
+  assert.equal(describeActivity(summarize(state, now)), '2 wrapping up')
+})
+
+test('a host that reports no main agent leaves the counts as they were', () => {
+  const now = Date.now()
+  const state = createPresenceState()
+  applyAgentStatus(state, { paneKey: 'a', worktreeId: 'w1', state: 'working', receivedAt: now })
+  // Nonsense in place of the main-agent fact degrades the same way an older
+  // host does: to the combined state, which every host sends.
+  applyAgentStatus(state, {
+    paneKey: 'b',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'sprinting', stateStartedAt: 'soon' }
+  })
+  const summary = summarize(state, now)
+  assert.equal(summary.wrappingUp, 0)
+  assert.equal(describeActivity(summary), '2 agents working')
+})
+
+test('the elapsed timer prefers the host stamp over local observation', () => {
+  const now = 10_000_000
+  const noticed = now - 30_000
+  const state = createPresenceState()
+  assert.equal(busyAnchor(state, noticed, now), noticed, 'no panes, no stamp')
+
+  // The agent has been working for ten minutes; this worker only just saw it,
+  // which is exactly what happens after an idle reap re-forks the worker.
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'working', stateStartedAt: now - 600_000 }
+  })
+  assert.equal(busyAnchor(state, noticed, now), now - 600_000)
+
+  // The earliest still-busy agent wins.
+  applyAgentStatus(state, {
+    paneKey: 'b',
+    worktreeId: 'w1',
+    state: 'blocked',
+    receivedAt: now,
+    mainAgent: { state: 'blocked', stateStartedAt: now - 900_000 }
+  })
+  assert.equal(busyAnchor(state, noticed, now), now - 900_000)
+})
+
+test('a stamp from a skewed or stale clock is not believed', () => {
+  const now = 10_000_000
+  const noticed = now - 30_000
+  const future = createPresenceState()
+  applyAgentStatus(future, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'working', stateStartedAt: now + 600_000 }
+  })
+  assert.equal(busyAnchor(future, noticed, now), noticed, 'a clock ahead of ours is ignored')
+
+  const ancient = createPresenceState()
+  applyAgentStatus(ancient, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'working', stateStartedAt: now - START_STAMP_MAX_AGE_MS - 1 }
+  })
+  assert.equal(busyAnchor(ancient, noticed, now), noticed, 'a stamp older than a day is ignored')
+
+  // Barely ahead is tolerated — clocks drift by seconds — but never published
+  // as a timer counting down from the future.
+  const nudged = createPresenceState()
+  applyAgentStatus(nudged, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'working', stateStartedAt: now + 5_000 }
+  })
+  assert.equal(busyAnchor(nudged, noticed, now), now)
+})
+
+test('a pane whose main agent is done does not anchor the timer', () => {
+  // Its stamp dates the main agent's `done`, not the start of the work the
+  // subagent is still finishing.
+  const now = 10_000_000
+  const state = createPresenceState()
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'done', stateStartedAt: now - 5_000 }
+  })
+  assert.equal(busyAnchor(state, now - 600_000, now), now - 600_000)
+})
+
+test('turns that ended badly are counted briefly and never published', () => {
+  const now = 10_000_000
+  const state = createPresenceState()
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'done',
+    receivedAt: now,
+    mainAgent: { state: 'done', outcome: 'failure', stateStartedAt: now - 1_000 }
+  })
+  applyAgentStatus(state, {
+    paneKey: 'b',
+    worktreeId: 'w1',
+    state: 'done',
+    receivedAt: now,
+    mainAgent: { state: 'done', outcome: 'interruption', stateStartedAt: now - 1_000 }
+  })
+  // A stop somebody asked for is not a fault.
+  applyAgentStatus(state, {
+    paneKey: 'c',
+    worktreeId: 'w1',
+    state: 'done',
+    receivedAt: now,
+    mainAgent: { state: 'done', outcome: 'cancellation', stateStartedAt: now - 1_000 }
+  })
+  assert.equal(summarize(state, now).recentFailures, 2)
+
+  // Old news: the pane survives for six hours, the failure does not.
+  assert.equal(summarize(state, now + RECENT_FAILURE_MS + 1).recentFailures, 0)
+
+  // The card never carries it.
+  const activity = buildActivity({ state, focus: null, privacy: 'full' })
+  assert.equal(activity.state, 'Fleet idle')
+  assert.ok(!JSON.stringify(activity).includes('fail'))
+})
+
+test('main-agent facts survive the storage round trip', () => {
+  const now = 10_000_000
+  const state = createPresenceState()
+  applyAgentStatus(state, {
+    paneKey: 'a',
+    worktreeId: 'w1',
+    state: 'working',
+    receivedAt: now,
+    mainAgent: { state: 'done', outcome: 'failure', stateStartedAt: now - 1_000 }
+  })
+  const restored = deserializeState(JSON.parse(JSON.stringify(serializeState(state))))
+  const summary = summarize(restored, now)
+  assert.equal(summary.wrappingUp, 1)
+  assert.equal(summary.recentFailures, 1)
+  assert.equal(busyAnchor(restored, now, now), now)
 })
 
 test('the party size gauges busy agents against the fleet', () => {

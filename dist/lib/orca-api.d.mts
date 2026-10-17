@@ -18,6 +18,31 @@
 export type PluginCapabilityKind = 'workspace:read' | 'terminal:send' | 'notifications:show' | 'storage' | 'secrets' | 'events:subscribe' | 'settings:own';
 /** `AGENT_STATUS_STATES`. */
 export type AgentStatusState = 'working' | 'blocked' | 'waiting' | 'done';
+/**
+ * `AGENT_TURN_OUTCOMES` — the verdict on a main agent's last finished turn.
+ *
+ * Absent means *unknown*, never success: a provider that omits its interrupt
+ * flag would otherwise turn a cancelled turn into a false success. `failure` is
+ * the provider's own error and `interruption` a death mid-turn the host proved;
+ * `cancellation` is a stop somebody asked for, so it is not a fault.
+ */
+export type AgentTurnOutcome = 'success' | 'failure' | 'cancellation' | 'superseded' | 'interruption' | 'unconfirmed';
+/**
+ * `AgentMainAgentStatus`, as projected into the event payload — the main
+ * agent's *own* state, beside the row's combined one.
+ */
+export type MainAgentStatus = {
+    state: AgentStatusState;
+    /** Present only while `state` is `done`; a new turn clears it. */
+    outcome?: AgentTurnOutcome;
+    /**
+     * Milliseconds, stamped on the host the agent runs on — an SSH host's own
+     * clock, not this machine's — when the main agent's own state began. The
+     * row's combined state has its own, later start while child work holds the
+     * pane open.
+     */
+    stateStartedAt: number;
+};
 export type WorktreeCreatedPayload = {
     worktreeId: string;
     path: string;
@@ -30,8 +55,20 @@ export type WorktreeRemovedPayload = {
 export type AgentStatusChangedPayload = {
     worktreeId: string | null;
     paneKey: string;
+    /**
+     * The *combined* status, which is what the pane shows the user: `working`
+     * while the main agent **or any live subagent** works. So a settled main
+     * agent whose subagent is still running arrives here as `working`.
+     */
     state: AgentStatusState;
     receivedAt: number;
+    /**
+     * The main agent's own state beside the combined one, so "the main agent is
+     * still working" is distinguishable from "a subagent outlived it". Absent on
+     * hosts that predate it and on rows carrying no main-agent fact (OSC titles,
+     * launch seeds), where `state` is all there is.
+     */
+    mainAgent?: MainAgentStatus;
 };
 /** `PLUGIN_EVENT_NAMES` — a closed set in v0. */
 export type PluginEventMap = {
