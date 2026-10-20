@@ -14,14 +14,35 @@ export function assessCompatibility(baseline, snapshot) {
     )
   }
 
+  const reviewedMain = baseline.verifiedMain?.contracts ?? {}
   for (const [path, expected] of Object.entries(baseline.contracts)) {
     const released = snapshot.releaseObjects[path]
     const main = snapshot.mainObjects[path]
     if (released !== expected) {
       findings.push(`${path} changed in ${snapshot.latestRelease}: ${expected} -> ${released ?? 'missing'}`)
     }
-    if (main !== expected) {
-      findings.push(`${path} changed on main: ${expected} -> ${main ?? 'missing'}`)
+    // `main` runs ahead of the release, so a file can legitimately differ there
+    // for weeks before it ships. `verifiedMain` records the unreleased object
+    // ids that were read and judged harmless; anything else on main is drift.
+    // A revert back to the released id is fine too — that is the baseline.
+    const alsoAccepted = reviewedMain[path]
+    if (main !== expected && main !== alsoAccepted) {
+      const against = alsoAccepted ? `${expected} or reviewed ${alsoAccepted}` : expected
+      findings.push(`${path} changed on main: ${against} -> ${main ?? 'missing'}`)
+    }
+  }
+
+  // An override that no longer describes anything is worse than none: left in
+  // place it would go on excusing whatever lands at that path next. Drift away
+  // from a reviewed id is already reported above, so this only catches the
+  // quiet case — main came back to the released id and the override is spent.
+  for (const path of Object.keys(reviewedMain)) {
+    if (!(path in baseline.contracts)) {
+      findings.push(`verifiedMain reviews ${path}, which is not a pinned contract`)
+      continue
+    }
+    if (snapshot.mainObjects[path] === baseline.contracts[path]) {
+      findings.push(`verifiedMain for ${path} is obsolete: main matches the release again`)
     }
   }
   return findings

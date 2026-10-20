@@ -18,7 +18,7 @@ TypeScript, no runtime dependencies — the Discord Rich Presence IPC protocol i
 
 ## Requirements
 
-- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.229`, see [Compatibility](#compatibility)
+- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.230`, see [Compatibility](#compatibility)
 - The Discord **desktop** app running on the same machine (the web client exposes no local IPC socket)
 
 Nothing else. The plugin ships with a Discord application id and starts publishing as soon as an agent does something.
@@ -173,12 +173,20 @@ Every key is optional, and `""` means *off* rather than *default*. Restart Orca,
 
 ## Compatibility
 
-Checked on 2026-10-17 against the latest stable desktop release, [`v1.4.229`](https://github.com/stablyai/orca/releases/tag/v1.4.229), and Orca `main` (whose own package version reads `1.4.214`; the release line and `main` number themselves separately, so source identity — not that number — is the comparison that means anything).
+Checked on 2026-10-20 against the latest stable desktop release, [`v1.4.230`](https://github.com/stablyai/orca/releases/tag/v1.4.230), and Orca `main` at `912c130` (whose own package version reads `1.4.214`; the release line and `main` number themselves separately, so source identity — not that number — is the comparison that means anything).
 
-Two of the ten upstream files this plugin depends on moved since the `v1.4.192` checkpoint, identically on the release and on `main`:
+One plugin-facing change has landed in a release since the `v1.4.192` checkpoint, and this version is built on it:
 
 - **`plugin-events.ts` — `agent.status.changed` gained `mainAgent`.** The event's `state` was always Orca's *combined* status: `working` covers a live subagent whose main agent has already settled. The new optional `mainAgent` carries the main agent's own `state`, the `outcome` of its last finished turn, and a host-stamped `stateStartedAt`. This plugin now uses all three — see [The fleet line](#the-fleet-line) and [The elapsed timer](#the-elapsed-timer).
-- **`plugin-manifest.ts` — refactor only.** `isQualifiedPluginKey`, `pluginPanelTabKey`, and `isPluginPanelTabKey` moved to a new `plugin-tab-key.ts` and are re-exported. The manifest schema itself is untouched.
+
+Everything else that moved is a refactor, read and judged harmless:
+
+- **`plugin-manifest.ts`** — `isQualifiedPluginKey`, `pluginPanelTabKey`, and `isPluginPanelTabKey` moved to a new `plugin-tab-key.ts` and are re-exported (released). On `main` the schema object is additionally named `pluginManifestV1Object` and `contributes` defaults through `prefault({})` instead of a hand-written literal — the same seven empty arrays, and nothing at all for a manifest like this one that declares `contributes` itself.
+- **`plugin-marketplace.ts`** (`main` only) — field maps extracted and the duplicate-category and duplicate-id refinements given names. Same rules.
+
+Neither renames a field or changes what validates, but both read like groundwork: a schema object explicitly labelled *V1*, and a marketplace reader now parameterized by filename.
+
+Orca keeps enriching what it knows per pane — `main` adds a `programStatus` facet (a program's own OSC 7501 progress, message, and blocks) to the status row — but the plugin projection is unchanged, so none of it reaches `agent.status.changed`. The four fields plus `mainAgent` are still the whole event.
 
 The engine floor stays `>=1.4.0`: every contract is additive, and `mainAgent` is optional, so the plugin behaves exactly as before on a host that does not send it.
 
@@ -196,6 +204,8 @@ Re-read upstream and found unchanged — these are the contracts `src/lib/orca-a
 | Manifest and marketplace schemas | Schemas unchanged (`plugin-manifest.ts` churn is a helper move); `commands[].context` is declared here |
 
 `orca-compatibility.json` records the reviewed Git blob ids. The read-only **Orca compatibility** workflow checks the latest stable release and `main` every Monday; it fails on any new stable version—even if the files are unchanged—or on contract drift in either ref, forcing this section and the handwritten API types to be reviewed. Run the same check locally with `npm run check:orca-compatibility` (network access to the public GitHub API is required).
+
+`main` runs weeks ahead of the release, so a file can sit changed there long before it ships. Those unreleased object ids go in `verifiedMain` once they have been read: the check then stays quiet about them, still fails the moment `main` moves past them, and flags an override as obsolete when `main` comes back to the released id — an override nobody clears would go on excusing whatever lands at that path next.
 
 Contribution kinds the manifest could carry and deliberately does not:
 
@@ -229,7 +239,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (89 tests)
+npm test           # build + node --test (93 tests)
 npm run typecheck  # no emit
 ```
 
@@ -249,6 +259,8 @@ src/lib/socket-path.mts     socket discovery across platforms and sandboxes
 orca-compatibility.json     reviewed upstream blob ids — the baseline the weekly check compares against
 scripts/check-orca-compatibility.mjs  the check itself (also runs as a workflow)
 ```
+
+The installed tree is hashed and capped at 2,000 files and 50 MiB, which this repository (37 tracked files, under half a megabyte) is in no danger of reaching — worth knowing only because the compiled output ships inside it.
 
 `dist/` **is committed on purpose.** Orca installs a plugin directory as-is with no build step on the host side, so the compiled entry has to be in the repository. CI fails the build when `dist/` and `src/` disagree.
 

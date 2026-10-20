@@ -13,12 +13,14 @@ function nextPatchRelease(release) {
   return `v${major}.${minor}.${Number(patch) + 1}`
 }
 
+/** The snapshot the baseline describes: the release as pinned, and main with
+ *  whatever unreleased object ids were reviewed on top. */
 function matchingSnapshot() {
   return {
     latestRelease: baseline.verifiedRelease,
     mainCommit: 'a'.repeat(40),
     releaseObjects: { ...baseline.contracts },
-    mainObjects: { ...baseline.contracts }
+    mainObjects: { ...baseline.contracts, ...(baseline.verifiedMain?.contracts ?? {}) }
   }
 }
 
@@ -44,6 +46,47 @@ test('a new stable release requires review even when the contracts match', () =>
   snapshot.latestRelease = nextPatchRelease(baseline.verifiedRelease)
   assert.deepEqual(assessCompatibility(baseline, snapshot), [
     `latest stable release is ${snapshot.latestRelease}; reviewed baseline is ${baseline.verifiedRelease}`
+  ])
+})
+
+test('the reviewed-main baseline is pinned to Git object ids too', () => {
+  const reviewed = baseline.verifiedMain?.contracts ?? {}
+  for (const [path, objectId] of Object.entries(reviewed)) {
+    assert.ok(path in baseline.contracts, `${path} is not a pinned contract`)
+    assert.match(objectId, /^[0-9a-f]{40}$/, path)
+    assert.notEqual(objectId, baseline.contracts[path], `${path} needs no main override`)
+  }
+  if (Object.keys(reviewed).length > 0) {
+    assert.match(baseline.verifiedMain.commit, /^[0-9a-f]{7,40}$/)
+  }
+})
+
+test('an unreleased change already reviewed on main is not reported again', () => {
+  // main runs ahead of the release for weeks; re-reporting a reviewed refactor
+  // every Monday would train everyone to ignore the check.
+  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const snapshot = matchingSnapshot()
+  assert.notEqual(snapshot.mainObjects[path], baseline.contracts[path], 'fixture sanity')
+  assert.deepEqual(assessCompatibility(baseline, snapshot), [])
+})
+
+test('main drifting past a reviewed id is reported against both ids', () => {
+  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const snapshot = matchingSnapshot()
+  snapshot.mainObjects[path] = 'd'.repeat(40)
+  const findings = assessCompatibility(baseline, snapshot)
+  assert.equal(findings.length, 1)
+  assert.ok(findings[0].includes('changed on main'))
+  assert.ok(findings[0].includes(baseline.verifiedMain.contracts[path]), 'names the reviewed id')
+})
+
+test('a spent main override is reported so it cannot excuse the next change', () => {
+  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const snapshot = matchingSnapshot()
+  // The refactor was reverted, or the release caught up: nothing left to excuse.
+  snapshot.mainObjects[path] = baseline.contracts[path]
+  assert.deepEqual(assessCompatibility(baseline, snapshot), [
+    `verifiedMain for ${path} is obsolete: main matches the release again`
   ])
 })
 
