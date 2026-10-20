@@ -185,15 +185,18 @@ test('manifest, package, and release tag agree on the version', () => {
   assert.equal(entry.source.ref, `v${manifest.version}`, 'marketplace ref lags the manifest version')
 })
 
-test('the README tells users to pin the released tag', () => {
-  const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
+test('every README tells users to pin the released tag', () => {
   const entry = marketplace.plugins.find(
     (plugin) => plugin.id === `${manifest.publisher}.${manifest.id}`
   )
   // Without the fragment Orca reads the index off the default branch, so a
-  // README that lags the release quietly installs unreleased commits.
+  // README that lags the release quietly installs unreleased commits. The
+  // translations are checked too: they are the ones a bump forgets.
   const pinned = `${entry.source.url}#v${manifest.version}`
-  assert.ok(readme.includes(pinned), `README should tell users to paste ${pinned}`)
+  for (const name of ['README.md', 'README.ko.md', 'README.ja.md', 'README.zh-CN.md']) {
+    const readme = readFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), 'utf8')
+    assert.ok(readme.includes(pinned), `${name} should tell users to paste ${pinned}`)
+  }
 })
 
 test('marketplace categories are supported slugs', () => {

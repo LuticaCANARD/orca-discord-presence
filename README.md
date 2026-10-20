@@ -1,5 +1,7 @@
 # Orca Discord Presence
 
+**English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+
 Publishes what your [Orca](https://github.com/stablyai/orca) agent fleet is doing to your Discord status, next to the Orca logo.
 
 ```text
@@ -28,10 +30,10 @@ Nothing else. The plugin ships with a Discord application id and starts publishi
 Settings → Plugins → *Add marketplace*, paste the URL, and accept the consent dialog:
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.0
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
 ```
 
-The `#v0.3.0` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
+The `#v0.3.1` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
 
 ## What gets published
 
@@ -239,7 +241,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (97 tests)
+npm test           # build + node --test (99 tests)
 npm run typecheck  # no emit
 ```
 
@@ -275,9 +277,9 @@ Orca ships no types package for plugin authors, so `src/lib/orca-api.mts` transc
 1. `package.json` → `version`
 2. `orca-plugin.json` → `version`
 3. `orca-marketplace.json` → `plugins[].source.ref` (as `v<version>`)
-4. `README.md` → the install URL's `#v<version>` fragment
+4. `README.md` and its translations (`README.ko.md`, `README.ja.md`, `README.zh-CN.md`) → the install URL's `#v<version>` fragment
 
-Run `npm run build`, commit all five files, and merge to `main`. **Tag and release** then reads the manifest version, stops if that tag already exists, runs the gates, and only then creates the tag and publishes the release — so a tag never points at a tree that failed its own checks, and nothing is tagged from a laptop. A version `0.4.0-rc.1` publishes as a pre-release.
+Run `npm run build`, commit every file the bump touched, and merge to `main`. **Tag and release** then reads the manifest version, stops if that tag already exists, runs the gates, and only then creates the tag and publishes the release — so a tag never points at a tree that failed its own checks, and nothing is tagged from a laptop. A version `0.4.0-rc.1` publishes as a pre-release.
 
 The old route still works: push a `v*` tag yourself and **Release** verifies it against the manifest and publishes it. Reach for it to re-cut a release from an older commit, not for ordinary ones.
 

@@ -18,8 +18,9 @@ failures catch most mistakes:
 - **A stale `dist/`.** Orca installs the plugin directory as-is with no build
   step, so the compiled output is committed. Change anything under `src/` and
   `npm run build`, then commit `dist/` in the same change.
-- **A version that disagrees with itself.** Four files carry it (see README →
-  *Cutting a release*), and a test fails when they drift.
+- **A version that disagrees with itself.** Four places carry it, the README
+  install URL in every translation among them (see README → *Cutting a
+  release*), and a test fails when they drift.
 
 ## Upstream is a moving target
 
@@ -33,6 +34,12 @@ any drift or any new stable release. When it fires: read the actual diff
 upstream, reflect what matters in the code and in README → *Compatibility*, then
 move the pin. `verifiedMain` is for ids that exist only on `main` and have been
 read and judged harmless; clear an entry once the release catches up.
+
+## The README is in four languages
+
+`README.md` is the source; `README.ko.md`, `README.ja.md` and `README.zh-CN.md`
+translate it. A change to the English README lands in all three in the same
+pull request — a translation that lags reads as current and is not.
 
 ## House style
 
