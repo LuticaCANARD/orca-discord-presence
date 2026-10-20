@@ -28,10 +28,10 @@ Nothing else. The plugin ships with a Discord application id and starts publishi
 Settings → Plugins → *Add marketplace*, paste the URL, and accept the consent dialog:
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.0
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
 ```
 
-The `#v0.3.0` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
+The `#v0.3.1` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
 
 ## What gets published
 
