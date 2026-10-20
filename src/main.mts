@@ -174,6 +174,13 @@ class PresenceRuntime {
   #reconnectTimer: NodeJS.Timeout | null = null
   #focusTimer: NodeJS.Timeout | null = null
   #disposed = false
+  /**
+   * Settles once settings and stored state are loaded. The event that re-forks
+   * a reaped worker arrives while that is still in flight; applied to the empty
+   * initial state, it would be persisted over the stored fleet and then itself
+   * be overwritten by the restore.
+   */
+  #ready: Promise<void> = Promise.resolve()
   #lastError: string | null = null
   /**
    * Per-worker party id. Random rather than fixed: a party id is the handle
@@ -192,7 +199,7 @@ class PresenceRuntime {
   }
 
   start(): void {
-    void this.#bootstrap()
+    this.#ready = this.#bootstrap()
     this.#focusTimer = setInterval(() => void this.#refreshFocus(), FOCUS_POLL_MS)
     this.#focusTimer.unref?.()
   }
@@ -200,6 +207,9 @@ class PresenceRuntime {
   async #bootstrap(): Promise<void> {
     await this.#loadSettings()
     await this.#loadState()
+    // The stored stamp outlives the panes that justified it: once the restore
+    // has pruned them as stale, a stamp from yesterday would keep the timer.
+    this.#trackBusyWindow()
     await this.#refreshFocus()
     this.#schedulePublish()
   }
@@ -295,6 +305,11 @@ class PresenceRuntime {
 
   /** Applies a state mutation, then persists and republishes. */
   onEvent(mutate: (state: PresenceState) => void): void {
+    // Chained rather than awaited so events keep their arrival order.
+    void this.#ready.then(() => this.#applyEvent(mutate))
+  }
+
+  #applyEvent(mutate: (state: PresenceState) => void): void {
     if (this.#disposed) {
       return
     }

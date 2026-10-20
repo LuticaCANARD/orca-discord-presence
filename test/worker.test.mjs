@@ -287,6 +287,59 @@ test('agent state is persisted so a reaped worker can rehydrate', async () => {
   await deactivate()
 })
 
+test('the event that re-forks the worker merges into the restored state', async () => {
+  const fake = createFakeOrca()
+  const now = Date.now()
+  fake.storage.set('presence-state', {
+    worktrees: {},
+    panes: {
+      p1: { worktreeId: 'w1', state: 'working', receivedAt: now },
+      p2: { worktreeId: 'w2', state: 'blocked', receivedAt: now }
+    }
+  })
+  // No settle between activate and the event: the host delivers the event that
+  // caused the fork while the worker is still restoring.
+  activate(fake.orca)
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w3',
+    paneKey: 'p3',
+    state: 'waiting',
+    receivedAt: now
+  })
+  await settle()
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.summary.panes, 3)
+  assert.deepEqual(Object.keys(fake.storage.get('presence-state').panes).sort(), ['p1', 'p2', 'p3'])
+  await deactivate()
+})
+
+test('a busy stamp whose panes went stale is dropped on restore', async () => {
+  const fake = createFakeOrca()
+  const yesterday = Date.now() - 24 * 60 * 60 * 1000
+  fake.storage.set('presence-state', {
+    worktrees: {},
+    panes: { p1: { worktreeId: 'w1', state: 'working', receivedAt: yesterday } }
+  })
+  fake.storage.set('busy-since', yesterday)
+  await activate(fake.orca)
+  await settle()
+  await settle()
+  assert.equal((await fake.invoke('presence.status')).busySince, 0)
+  assert.equal(fake.storage.has('busy-since'), false)
+
+  const before = Date.now()
+  await fake.emit('agent.status.changed', {
+    worktreeId: 'w1',
+    paneKey: 'p2',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await settle()
+  assert.ok((await fake.invoke('presence.status')).busySince >= before)
+  await deactivate()
+})
+
 test('toggle and privacy commands persist their settings', async () => {
   const fake = createFakeOrca()
   await activate(fake.orca)
