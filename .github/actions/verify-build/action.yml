@@ -1,0 +1,34 @@
+name: Verify and build
+description: >
+  The gates every path to a release shares: types, a build, a dist/ that agrees
+  with src/, and the tests. Factored out so CI, a hand-pushed tag, and the
+  automatic release cannot drift from one another.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+        cache: npm
+    - run: npm ci
+      shell: bash
+    - run: npm run typecheck
+      shell: bash
+    - run: npm run build
+      shell: bash
+    # Why: Orca installs the plugin directory as-is with no build step, so a
+    # dist/ that lags behind src/ ships a stale plugin to every user. Fail the
+    # build rather than let the two drift.
+    - name: dist/ is up to date with src/
+      shell: bash
+      run: |
+        if ! git diff --quiet -- dist; then
+          echo "::error::dist/ is stale — run 'npm run build' and commit the result"
+          git diff --stat -- dist
+          exit 1
+        fi
+    # The suite also asserts the four places that carry the version agree, so a
+    # release can never ship a marketplace index pointing at another tag.
+    - run: node --test
+      shell: bash

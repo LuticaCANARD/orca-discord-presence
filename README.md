@@ -239,7 +239,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (93 tests)
+npm test           # build + node --test (97 tests)
 npm run typecheck  # no emit
 ```
 
@@ -258,6 +258,8 @@ src/lib/discord-ipc.mts     Rich Presence IPC client over node:net
 src/lib/socket-path.mts     socket discovery across platforms and sandboxes
 orca-compatibility.json     reviewed upstream blob ids — the baseline the weekly check compares against
 scripts/check-orca-compatibility.mjs  the check itself (also runs as a workflow)
+.github/actions/verify-build  the gates, shared by CI and both release paths
+.github/workflows/          CI, tag-and-release, release, orca-compatibility
 ```
 
 The installed tree is hashed and capped at 2,000 files and 50 MiB, which this repository (37 tracked files, under half a megabyte) is in no danger of reaching — worth knowing only because the compiled output ships inside it.
@@ -268,20 +270,25 @@ Orca ships no types package for plugin authors, so `src/lib/orca-api.mts` transc
 
 ### Cutting a release
 
-Four places carry the version, and a test fails if they disagree:
+**Bumping the version is the release.** Four places carry it, and a test fails if they disagree:
 
 1. `package.json` → `version`
 2. `orca-plugin.json` → `version`
 3. `orca-marketplace.json` → `plugins[].source.ref` (as `v<version>`)
 4. `README.md` → the install URL's `#v<version>` fragment
 
-Then `npm run build`, commit, and push a matching tag:
+Run `npm run build`, commit all five files, and merge to `main`. **Tag and release** then reads the manifest version, stops if that tag already exists, runs the gates, and only then creates the tag and publishes the release — so a tag never points at a tree that failed its own checks, and nothing is tagged from a laptop. A version `0.4.0-rc.1` publishes as a pre-release.
 
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+The old route still works: push a `v*` tag yourself and **Release** verifies it against the manifest and publishes it. Reach for it to re-cut a release from an older commit, not for ordinary ones.
 
-The release workflow re-runs typecheck, build, the stale-`dist/` check and the tests, verifies the tag matches the manifest, and publishes a GitHub release.
+| Workflow | Trigger | Does |
+| --- | --- | --- |
+| **CI** | every push to `main`, every PR | The gates |
+| **Tag and release** | push to `main` | Tags and publishes a version that has no tag yet |
+| **Release** | a `v*` tag pushed by hand | Verifies the tag against the manifest and publishes it |
+| **Orca compatibility** | Mondays, or on demand | Reads upstream and fails on anything unreviewed |
+
+The gates themselves — typecheck, build, a `dist/` that agrees with `src/`, and the tests — live once in `.github/actions/verify-build` so none of the three paths can quietly drift from the others.
 
 The marketplace listing pins a **release tag**, not `main` — a branch ref would re-resolve to whatever HEAD happens to be on the next marketplace refresh, quietly moving users onto unreleased commits. A test enforces that the ref is a tag and that it matches the manifest version.
 
