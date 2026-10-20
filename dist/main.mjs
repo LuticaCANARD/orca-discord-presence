@@ -96,6 +96,13 @@ class PresenceRuntime {
     #reconnectTimer = null;
     #focusTimer = null;
     #disposed = false;
+    /**
+     * Settles once settings and stored state are loaded. The event that re-forks
+     * a reaped worker arrives while that is still in flight; applied to the empty
+     * initial state, it would be persisted over the stored fleet and then itself
+     * be overwritten by the restore.
+     */
+    #ready = Promise.resolve();
     #lastError = null;
     /**
      * Per-worker party id. Random rather than fixed: a party id is the handle
@@ -112,13 +119,16 @@ class PresenceRuntime {
         this.#granted = new Set(orca.grantedCapabilities ?? []);
     }
     start() {
-        void this.#bootstrap();
+        this.#ready = this.#bootstrap();
         this.#focusTimer = setInterval(() => void this.#refreshFocus(), FOCUS_POLL_MS);
         this.#focusTimer.unref?.();
     }
     async #bootstrap() {
         await this.#loadSettings();
         await this.#loadState();
+        // The stored stamp outlives the panes that justified it: once the restore
+        // has pruned them as stale, a stamp from yesterday would keep the timer.
+        this.#trackBusyWindow();
         await this.#refreshFocus();
         this.#schedulePublish();
     }
@@ -212,6 +222,10 @@ class PresenceRuntime {
     }
     /** Applies a state mutation, then persists and republishes. */
     onEvent(mutate) {
+        // Chained rather than awaited so events keep their arrival order.
+        void this.#ready.then(() => this.#applyEvent(mutate));
+    }
+    #applyEvent(mutate) {
         if (this.#disposed) {
             return;
         }
