@@ -27,17 +27,21 @@ TypeScript 製で、実行時の依存関係はない。Discord Rich Presence �
 
 ## インストール
 
-Settings → Plugins → *Add marketplace* を開き、URL を貼り付けて同意ダイアログを承認する。
+**v0.4.0 の新機能。** Orca のプラグイン設定でプライバシー、ヘッダー、画像を変更すると、実行中に反映される。`full` モードでは、フォーカス中のワークスペースが変わると Discord のカードが更新される。
+
+**Settings → Plugins → Add plugin → From a Git URL…** を開き、以下のリリース URL を貼り付けて、要求された権限を承認する。
 
 ```text
 https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.4.0` は重要である。これがないと Orca は `main` からインデックスを読み、`main` は動き続ける。ダイアログには後述の [権限](#要求する権限) が一覧表示される。プラグイン自体に手を入れたい場合は [開発](#開発) を参照。
+**Catalog sources…** を使う場合は、**Git URL** にリポジトリの URL、**Git ref** に `v0.4.0` を入力する。**Add source** を押し、カタログで **Discord Presence** を開いてインストールする。
+
+**v0.3.1 からの更新。** 先に Orca を 1.4.246 以降に更新する。カタログを `v0.3.1` に固定して使っている場合は、`v0.4.0` のソースを追加する。Orca に権限の確認を求められたら、変更内容を確認する。
+
+[リリースノート](https://github.com/LuticaCANARD/orca-discord-presence/releases/tag/v0.4.0)
 
 ## 公開される内容
-
-ここに設定項目はない。カードに何が表示されるか、そしてその理由である。
 
 ### フリート行
 
