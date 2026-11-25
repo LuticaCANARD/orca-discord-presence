@@ -27,17 +27,21 @@ TypeScript로 작성되었고 런타임 의존성이 없다. Discord Rich Presen
 
 ## 설치
 
-Settings → Plugins → *Add marketplace*에서 아래 URL을 붙여 넣고 동의 대화상자를 수락한다.
+**v0.4.0의 새 기능.** Orca 플러그인 설정에서 공개 범위, 헤더, 이미지를 바꾸면 실행 중에 반영된다. `full` 모드에서는 포커스된 워크스페이스가 바뀔 때 Discord 카드가 갱신된다.
+
+**Settings → Plugins → Add plugin → From a Git URL…**에서 아래 릴리스 URL을 붙여 넣고 요청된 권한을 승인한다.
 
 ```text
 https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.4.0`이 중요하다. 이것이 없으면 Orca는 계속 바뀌는 `main`에서 인덱스를 읽는다. 대화상자에는 아래의 [권한](#요청하는-권한)이 나열된다. 플러그인을 직접 고쳐 보려면 [개발](#개발)을 참고한다.
+**Catalog sources…**에서 설치하려면 **Git URL**에 저장소 주소를, **Git ref**에 `v0.4.0`을 입력한다. **Add source**를 누른 뒤 카탈로그에서 **Discord Presence**를 열어 설치한다.
+
+**v0.3.1에서 업데이트하기.** 먼저 Orca를 1.4.246 이상으로 업데이트한다. 카탈로그를 `v0.3.1`로 고정해 사용 중이라면 `v0.4.0` 소스를 추가한다. Orca에서 권한 검토를 요청하면 변경된 권한을 확인한다.
+
+[릴리스 노트](https://github.com/LuticaCANARD/orca-discord-presence/releases/tag/v0.4.0)
 
 ## 게시되는 내용
-
-이 절의 내용은 설정할 수 없다. 카드에 무엇이 표시되는지와 그 이유를 설명한다.
 
 ### 플릿 줄
 

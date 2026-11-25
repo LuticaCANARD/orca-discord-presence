@@ -27,17 +27,21 @@
 
 ## 安装
 
-Settings → Plugins → *Add marketplace*，粘贴下面的 URL，然后接受授权对话框：
+**v0.4.0 的新功能。** 可在 Orca 插件设置中修改隐私级别、标题和图片，改动会在运行时生效。在 `full` 模式下，切换当前工作区时 Discord 卡片会随之更新。
+
+打开 **Settings → Plugins → Add plugin → From a Git URL…**，粘贴下面的发行版 URL，并批准请求的权限。
 
 ```text
 https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.4.0` 这一部分很重要：没有它，Orca 会从不断变化的 `main` 分支读取索引。对话框中会列出下文的[所请求的权限](#所请求的权限)。如果你想修改插件本身，请参见[开发](#开发)。
+如果使用 **Catalog sources…** 安装，请在 **Git URL** 输入仓库地址，在 **Git ref** 输入 `v0.4.0`。点击 **Add source**，然后在目录中打开 **Discord Presence** 进行安装。
+
+**从 v0.3.1 升级。** 先将 Orca 更新至 1.4.246 或更高版本。如果目录固定在 `v0.3.1`，请添加 `v0.4.0` 源。如果 Orca 提示审核权限，请查看变更后的权限。
+
+[发行说明](https://github.com/LuticaCANARD/orca-discord-presence/releases/tag/v0.4.0)
 
 ## 会发布哪些内容
-
-本节内容均不可配置；它说明的是卡片上显示什么，以及为什么这样显示。
 
 ### 集群状态行
 

@@ -27,17 +27,21 @@ Nothing else. The plugin ships with a Discord application id and starts publishi
 
 ## Install
 
-Settings → Plugins → *Add marketplace*, paste the URL, and accept the consent dialog:
+**New in v0.4.0.** Edit privacy, header, and artwork in Orca’s plugin settings. Changes apply while the plugin runs. In `full` mode, the Discord card updates when the focused workspace changes.
+
+Open **Settings → Plugins → Add plugin → From a Git URL…**, paste the release URL, and approve the requested permissions.
 
 ```text
 https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-The `#v0.4.0` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
+If you install through **Catalog sources…**, enter the repository URL in **Git URL** and `v0.4.0` in **Git ref**. Choose **Add source**, then open **Discord Presence** in the catalog to install it.
+
+**Upgrading from v0.3.1.** Update Orca to 1.4.246 or later first. If you use the catalog pinned to `v0.3.1`, add the `v0.4.0` source so Orca can offer the new version. Review the updated permissions if Orca prompts you.
+
+[Release notes](https://github.com/LuticaCANARD/orca-discord-presence/releases/tag/v0.4.0)
 
 ## What gets published
-
-Nothing here is configurable; it is what the card says and why.
 
 ### The fleet line
 
