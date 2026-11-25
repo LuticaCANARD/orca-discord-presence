@@ -191,7 +191,7 @@ function isTurnOutcome(value: unknown): value is AgentTurnOutcome {
 
 export function applyWorktreeCreated(state: PresenceState, payload: unknown): PresenceState {
   const record = asRecord(payload)
-  const worktreeId = asString(record?.['worktreeId'])
+  const worktreeId = asString(record?.['workspaceId'] ?? record?.['worktreeId'])
   if (!worktreeId) {
     return state
   }
@@ -204,7 +204,7 @@ export function applyWorktreeCreated(state: PresenceState, payload: unknown): Pr
 
 export function applyWorktreeRemoved(state: PresenceState, payload: unknown): PresenceState {
   const record = asRecord(payload)
-  const worktreeId = asString(record?.['worktreeId'])
+  const worktreeId = asString(record?.['workspaceId'] ?? record?.['worktreeId'])
   if (!worktreeId) {
     return state
   }
@@ -221,10 +221,10 @@ export function applyAgentStatus(state: PresenceState, payload: unknown): Presen
   const record = asRecord(payload)
   const paneKey = asString(record?.['paneKey'])
   const agentState = record?.['state']
-  if (!paneKey || !isAgentState(agentState)) {
+  if (!record || !paneKey || !isAgentState(agentState)) {
     return state
   }
-  const worktreeId = record?.['worktreeId']
+  const worktreeId = Object.hasOwn(record, 'workspaceId') ? record['workspaceId'] : record['worktreeId']
   const receivedAt = record?.['receivedAt']
   state.panes.set(paneKey, {
     worktreeId: typeof worktreeId === 'string' ? worktreeId : null,
@@ -409,7 +409,7 @@ function worktreeName(record: WorktreeRecord | undefined): string {
 /**
  * Names of the workspaces (worktrees) that currently have a working agent.
  *
- * Only worktrees seen through `worktree.created` can be named — one that
+ * Only worktrees seen through `workspace.created` can be named — one that
  * existed before the plugin was installed is known by id alone, so the list
  * comes back short and `describeActivity` falls back to counting.
  */
@@ -489,7 +489,7 @@ export function describeActivity(
 /**
  * Project label from whatever the host gave us. `workspace.readContext` returns
  * a display name for the focused worktree; a worktree seen only through
- * `worktree.created` has just a path, whose basename is the best available name.
+ * `workspace.created` has just a path, whose basename is the best available name.
  */
 export function describeProject(focus: WorkspaceContext, state: PresenceState): string {
   const displayName = focus?.displayName.trim()

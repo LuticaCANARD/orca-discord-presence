@@ -20,7 +20,7 @@ TypeScript, no runtime dependencies — the Discord Rich Presence IPC protocol i
 
 ## Requirements
 
-- Orca `>= 1.4.0` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.230`, see [Compatibility](#compatibility)
+- Orca `>= 1.4.246` with the plugin system enabled (Settings → Plugins) — last verified against Orca `1.4.274`, see [Compatibility](#compatibility)
 - The Discord **desktop** app running on the same machine (the web client exposes no local IPC socket)
 
 Nothing else. The plugin ships with a Discord application id and starts publishing as soon as an agent does something.
@@ -30,10 +30,10 @@ Nothing else. The plugin ships with a Discord application id and starts publishi
 Settings → Plugins → *Add marketplace*, paste the URL, and accept the consent dialog:
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-The `#v0.3.1` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
+The `#v0.4.0` matters: without it Orca reads the index off `main`, which moves. The dialog lists the [capabilities](#capabilities-requested) below. To hack on the plugin instead, see [Development](#development).
 
 ## What gets published
 
@@ -127,7 +127,9 @@ A Rich Presence application id is a public identifier — it travels in every cl
 
 ### The settings file
 
-Orca has no UI for per-plugin settings yet, so anything the commands do not cover is written by hand:
+Open **Settings → Plugins → Discord Presence** to edit the settings. Changes made in Orca take effect while the plugin runs.
+
+You can also edit the stored JSON directly. Restart Orca or reload the plugin after a direct file edit.
 
 | Platform | Path |
 | --- | --- |
@@ -165,64 +167,27 @@ Every key is optional, and `""` means *off* rather than *default*. Restart Orca,
 
 | Capability | Why |
 | --- | --- |
-| `workspace:read` | Focused workspace name and branch, for `full` privacy |
-| `events:subscribe` | Worktree lifecycle and agent status changes — the data being published |
-| `storage` | Fleet state survives worker reaps (see below) |
+| `workspace:read` | Focused workspace context and workspace events |
+| `agent:read` | Agent status changes |
+| `storage:own` | Fleet state survives worker reaps (see below) |
 | `settings:own` | The plugin's own `enabled` / `privacy` / `clientId` / `header` / artwork keys |
 | `notifications:show` | Command feedback |
 
-`secrets` and `terminal:send` are deliberately **not** requested.
+`secrets:own` and `terminal:send` are deliberately **not** requested.
 
 ## Compatibility
 
-Checked on 2026-10-20 against the latest stable desktop release, [`v1.4.230`](https://github.com/stablyai/orca/releases/tag/v1.4.230), and Orca `main` at `912c130` (whose own package version reads `1.4.214`; the release line and `main` number themselves separately, so source identity — not that number — is the comparison that means anything).
+Reviewed the plugin contracts in Orca [v1.4.274](https://github.com/stablyai/orca/releases/tag/v1.4.274) and Orca `main` at `bc471d51`. Manifest format 2 requires Orca 1.4.246 or later for this plugin’s settings and focus event.
 
-One plugin-facing change has landed in a release since the `v1.4.192` checkpoint, and this version is built on it:
+In `full` privacy, Orca’s `workspace.changed` event updates the workspace and branch on the Discord card, subject to the usual publish delay. The same context is read on startup, **Show Connection Status**, and **Reconnect**.
 
-- **`plugin-events.ts` — `agent.status.changed` gained `mainAgent`.** The event's `state` was always Orca's *combined* status: `working` covers a live subagent whose main agent has already settled. The new optional `mainAgent` carries the main agent's own `state`, the `outcome` of its last finished turn, and a host-stamped `stateStartedAt`. This plugin now uses all three — see [The fleet line](#the-fleet-line) and [The elapsed timer](#the-elapsed-timer).
-
-Everything else that moved is a refactor, read and judged harmless:
-
-- **`plugin-manifest.ts`** — `isQualifiedPluginKey`, `pluginPanelTabKey`, and `isPluginPanelTabKey` moved to a new `plugin-tab-key.ts` and are re-exported (released). On `main` the schema object is additionally named `pluginManifestV1Object` and `contributes` defaults through `prefault({})` instead of a hand-written literal — the same seven empty arrays, and nothing at all for a manifest like this one that declares `contributes` itself.
-- **`plugin-marketplace.ts`** (`main` only) — field maps extracted and the duplicate-category and duplicate-id refinements given names. Same rules.
-
-Neither renames a field or changes what validates, but both read like groundwork: a schema object explicitly labelled *V1*, and a marketplace reader now parameterized by filename.
-
-Orca keeps enriching what it knows per pane — `main` adds a `programStatus` facet (a program's own OSC 7501 progress, message, and blocks) to the status row — but the plugin projection is unchanged, so none of it reaches `agent.status.changed`. The four fields plus `mainAgent` are still the whole event.
-
-The engine floor stays `>=1.4.0`: every contract is additive, and `mainAgent` is optional, so the plugin behaves exactly as before on a host that does not send it.
-
-Re-read upstream and found unchanged — these are the contracts `src/lib/orca-api.mts` transcribes:
-
-| Upstream contract | State |
-| --- | --- |
-| Host API v0 method table (`plugin-host-api.ts`) | 13 methods, all still `experimental`; `workspace.readContext` still returns `{ branch, displayName, terminals }` |
-| Event set (`plugin-events.ts`) | Still the three worktree/agent events — no focus-change event; `agent.status.changed` now also carries the optional `mainAgent` |
-| Capability kinds (`plugin-capabilities.ts`) | Still seven unscoped kinds; still no `net:*` |
-| Agent states (`agent-status-types.ts`) | Still `working` / `blocked` / `waiting` / `done`; of the row's richer internals only `mainAgent` reaches the plugin event payload |
-| Worker environment (`plugin-worker-env.ts`) | Still an allowlist without `XDG_RUNTIME_DIR` |
-| Idle reap (`plugin-host-protocol.ts`) | Still 5 minutes |
-| Settings and storage location | Still `<userData>/plugins-data/<publisher>.<id>/` |
-| Manifest and marketplace schemas | Schemas unchanged (`plugin-manifest.ts` churn is a helper move); `commands[].context` is declared here |
-
-`orca-compatibility.json` records the reviewed Git blob ids. The read-only **Orca compatibility** workflow checks the latest stable release and `main` every Monday; it fails on any new stable version—even if the files are unchanged—or on contract drift in either ref, forcing this section and the handwritten API types to be reviewed. Run the same check locally with `npm run check:orca-compatibility` (network access to the public GitHub API is required).
-
-`main` runs weeks ahead of the release, so a file can sit changed there long before it ships. Those unreleased object ids go in `verifiedMain` once they have been read: the check then stays quiet about them, still fails the moment `main` moves past them, and flags an override as obsolete when `main` comes back to the released id — an override nobody clears would go on excusing whatever lands at that path next.
-
-Contribution kinds the manifest could carry and deliberately does not:
-
-- **`keybindings`** — see [Shortcuts](#shortcuts).
-- **`panels`** — a sandboxed panel may call only `workspace.readContext`, `terminal.sendText`, and `notifications.show`. Plugin storage and settings are worker-only, so a presence panel could not read what the plugin is publishing; there is nothing to render yet.
-- **`languagePacks`, `vmRecipes`, `agents`** — content packs for other kinds of plugin.
-- **`icon`** — the host validates it, but nothing surfaces it in the plugin list yet.
+`orca-compatibility.json` records the reviewed Git blob IDs. Run `npm run check:orca-compatibility` to compare the latest stable release and `main` against the baseline. The same check runs weekly on GitHub.
 
 ## Known limitations
 
 **The status is ephemeral by design.** Orca reaps a plugin worker after 5 minutes with no in-flight work (`PLUGIN_WORKER_IDLE_REAP_MS`) and re-forks it on the next event. A worker cannot keep itself alive — only host→worker traffic refreshes the idle clock. So the presence appears while your fleet is active, disappears after a few quiet minutes, and returns on the next agent event. Fleet state is persisted to plugin storage so nothing is lost across the gap, and statuses older than six hours are dropped rather than rehydrated as if still live.
 
-**The focused workspace is polled, not pushed.** Orca emits no focus-change event, so `full` privacy refreshes and republishes the workspace and branch every 30 seconds. **Show Connection Status** and **Reconnect** refresh it immediately.
-
-**Command arguments depend on the host.** **Set Header** accepts a string or `{ header }`, and **Cycle Privacy Level** a level or `{ privacy }`, when Orca passes an argument through. As of `1.4.192` no host path does: the palette and recorded shortcuts both invoke commands with no argument, even though the IPC carries one. Until that changes the cycles are the whole interface, and free-form headers go in the settings file.
+The palette and recorded shortcuts invoke the commands without arguments. Set a custom header in the plugin settings.
 
 **The work-start stamp comes from the agent's own host.** `mainAgent.stateStartedAt` is stamped by the machine the agent runs on, so an SSH host with a skewed clock would otherwise move Discord's timer. Stamps more than a minute ahead of this machine or more than a day old are rejected in favour of the locally observed moment; a clock wrong by less than that shifts the elapsed reading by however much it is wrong.
 
@@ -241,7 +206,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (99 tests)
+npm test           # build + node --test
 npm run typecheck  # no emit
 ```
 

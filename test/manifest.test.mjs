@@ -23,15 +23,16 @@ const CAPABILITY_KINDS = [
   'workspace:read',
   'terminal:send',
   'notifications:show',
-  'storage',
-  'secrets',
-  'events:subscribe',
+  'storage:own',
+  'secrets:own',
+  'agent:read',
   'settings:own'
 ]
-const EVENT_NAMES = ['worktree.created', 'worktree.removed', 'agent.status.changed']
+const EVENT_NAMES = ['workspace.created', 'workspace.removed', 'agent.status.changed', 'workspace.changed']
 
 test('identity fields match the host id grammar', () => {
-  assert.equal(manifest.manifestVersion, 1)
+  assert.equal(manifest.manifestVersion, 2)
+  assert.equal(manifest.execution, 'trusted-worker')
   assert.equal(manifest.pluginApi, 1)
   assert.match(manifest.id, PLUGIN_ID_RE)
   assert.match(manifest.publisher, PLUGIN_ID_RE)
@@ -66,8 +67,8 @@ test('capabilities cover exactly what the worker calls', () => {
   const declared = new Set(manifest.capabilities.map((entry) => entry.kind))
   for (const required of [
     'workspace:read',
-    'events:subscribe',
-    'storage',
+    'agent:read',
+    'storage:own',
     'settings:own',
     'notifications:show'
   ]) {
@@ -75,22 +76,15 @@ test('capabilities cover exactly what the worker calls', () => {
   }
   // Nothing the plugin does needs these, and asking for them would show up in
   // the consent dialog as an unexplained ask.
-  assert.ok(!declared.has('secrets'))
+  assert.ok(!declared.has('secrets:own'))
   assert.ok(!declared.has('terminal:send'))
 })
-
-const COMMAND_CONTEXTS = ['global', 'worktree']
 
 test('command ids are portable and match what main.mjs registers', async () => {
   for (const command of manifest.contributes.commands) {
     assert.match(command.id, COMMAND_ID_RE)
     assert.ok(command.title.length >= 1 && command.title.length <= 256)
-    // `context` is optional upstream and defaults to `global`; declaring it
-    // keeps the palette entry and any user-assigned shortcut unambiguous.
-    assert.ok(
-      COMMAND_CONTEXTS.includes(command.context),
-      `command ${command.id} needs a declared context`
-    )
+    assert.ok(!Object.hasOwn(command, 'context'), 'format 2 rejects the old context field')
   }
   const source = readFileSync(fileURLToPath(new URL('../src/main.mts', import.meta.url)), 'utf8')
   for (const command of manifest.contributes.commands) {

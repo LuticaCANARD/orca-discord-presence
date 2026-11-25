@@ -64,14 +64,14 @@ test('the reviewed-main baseline is pinned to Git object ids too', () => {
 test('an unreleased change already reviewed on main is not reported again', () => {
   // main runs ahead of the release for weeks; re-reporting a reviewed refactor
   // every Monday would train everyone to ignore the check.
-  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const path = 'src/shared/plugins/manifest/plugin-manifest.ts'
   const snapshot = matchingSnapshot()
   assert.notEqual(snapshot.mainObjects[path], baseline.contracts[path], 'fixture sanity')
   assert.deepEqual(assessCompatibility(baseline, snapshot), [])
 })
 
 test('main drifting past a reviewed id is reported against both ids', () => {
-  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const path = 'src/shared/plugins/manifest/plugin-manifest.ts'
   const snapshot = matchingSnapshot()
   snapshot.mainObjects[path] = 'd'.repeat(40)
   const findings = assessCompatibility(baseline, snapshot)
@@ -81,7 +81,7 @@ test('main drifting past a reviewed id is reported against both ids', () => {
 })
 
 test('a spent main override is reported so it cannot excuse the next change', () => {
-  const path = 'src/shared/plugins/plugin-manifest.ts'
+  const path = 'src/shared/plugins/manifest/plugin-manifest.ts'
   const snapshot = matchingSnapshot()
   // The refactor was reverted, or the release caught up: nothing left to excuse.
   snapshot.mainObjects[path] = baseline.contracts[path]
