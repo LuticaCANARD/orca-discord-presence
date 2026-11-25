@@ -29,7 +29,6 @@ export const DEFAULT_CLIENT_ID = '1534192299926360234';
 const PUBLISH_DEBOUNCE_MS = 1_500;
 /** Discord throttles SET_ACTIVITY at roughly 5 calls / 15s; stay well under. */
 const MIN_PUBLISH_INTERVAL_MS = 4_000;
-const FOCUS_POLL_MS = 30_000;
 const RECONNECT_DELAYS_MS = [15_000, 30_000, 60_000];
 /**
  * Module-scoped because the host ignores whatever `activate` returns and calls
@@ -52,12 +51,13 @@ export default function activate(orca) {
     // the presets when it does not — Orca has no text-input affordance for
     // commands, so the cycle is what makes this usable from the palette alone.
     orca.commands.register('presence.header', (args) => runtime.setHeader(args));
-    orca.events.on('worktree.created', (payload) => {
+    orca.events.on('workspace.created', (payload) => {
         runtime.onEvent((state) => applyWorktreeCreated(state, payload));
     });
-    orca.events.on('worktree.removed', (payload) => {
+    orca.events.on('workspace.removed', (payload) => {
         runtime.onEvent((state) => applyWorktreeRemoved(state, payload));
     });
+    orca.events.on('workspace.changed', ({ context }) => runtime.onFocusChanged(context));
     orca.events.on('agent.status.changed', (payload) => {
         runtime.onEvent((state) => applyAgentStatus(state, payload));
     });
@@ -94,7 +94,9 @@ class PresenceRuntime {
     #focus = null;
     #publishTimer = null;
     #reconnectTimer = null;
-    #focusTimer = null;
+    #focusRevision = 0;
+    #settingsSubscription;
+    #settingsRefresh = Promise.resolve();
     #disposed = false;
     /**
      * Settles once settings and stored state are loaded. The event that re-forks
@@ -120,8 +122,13 @@ class PresenceRuntime {
     }
     start() {
         this.#ready = this.#bootstrap();
-        this.#focusTimer = setInterval(() => void this.#refreshFocus(), FOCUS_POLL_MS);
-        this.#focusTimer.unref?.();
+        if (this.#can('settings:own')) {
+            this.#settingsSubscription = this.#orca.settings.onDidChange(() => {
+                this.#settingsRefresh = this.#settingsRefresh
+                    .then(() => this.#ready)
+                    .then(() => this.#refreshSettings());
+            });
+        }
     }
     async #bootstrap() {
         await this.#loadSettings();
@@ -139,8 +146,12 @@ class PresenceRuntime {
         if (!this.#can('settings:own')) {
             return;
         }
+        const previous = this.#settings;
         try {
             const result = await this.#orca.host.call('settings.get');
+            if (this.#disposed || previous !== this.#settings) {
+                return;
+            }
             const stored = result.settings ?? {};
             this.#settings = {
                 enabled: stored['enabled'] !== false,
@@ -159,6 +170,27 @@ class PresenceRuntime {
             this.#orca.log(`settings unavailable, using defaults: ${describeError(error)}`);
         }
     }
+    async #refreshSettings() {
+        if (this.#disposed) {
+            return;
+        }
+        const previous = this.#settings;
+        await this.#loadSettings();
+        if (this.#disposed || previous === this.#settings) {
+            return;
+        }
+        if (previous.clientId !== this.#settings.clientId) {
+            this.#client?.close();
+            this.#client = null;
+            this.#lastPayload = '';
+        }
+        if (!this.#settings.enabled || this.#settings.privacy === 'off') {
+            await this.#clearPresence();
+        }
+        else {
+            this.#schedulePublish();
+        }
+    }
     async #saveSetting(key, value) {
         if (!this.#can('settings:own')) {
             return;
@@ -171,7 +203,7 @@ class PresenceRuntime {
         }
     }
     async #loadState() {
-        if (!this.#can('storage')) {
+        if (!this.#can('storage:own')) {
             return;
         }
         try {
@@ -185,7 +217,7 @@ class PresenceRuntime {
         }
     }
     async #persistState() {
-        if (!this.#can('storage')) {
+        if (!this.#can('storage:own')) {
             return;
         }
         try {
@@ -202,7 +234,7 @@ class PresenceRuntime {
         if (this.#disposed || !this.#can('workspace:read')) {
             return;
         }
-        const previous = this.#focus;
+        const revision = this.#focusRevision;
         let next;
         try {
             next = await this.#orca.host.call('workspace.readContext');
@@ -212,10 +244,17 @@ class PresenceRuntime {
             this.#orca.log(`workspace context unavailable: ${describeError(error)}`);
             next = null;
         }
+        if (revision === this.#focusRevision) {
+            this.onFocusChanged(next);
+        }
+    }
+    onFocusChanged(next) {
+        if (this.#disposed) {
+            return;
+        }
+        this.#focusRevision += 1;
+        const previous = this.#focus;
         this.#focus = next;
-        // Orca still has no focus-change plugin event. Polling only helps if a
-        // changed context triggers a publish; otherwise the new workspace sits in
-        // memory until an unrelated agent event happens to arrive.
         if (this.#settings.privacy === 'full' && !sameFocus(previous, next)) {
             this.#schedulePublish();
         }
@@ -249,7 +288,7 @@ class PresenceRuntime {
         const busy = isBusy(summarize(this.#state));
         if (busy && this.#busySince === 0) {
             this.#busySince = Date.now();
-            if (this.#can('storage')) {
+            if (this.#can('storage:own')) {
                 void this.#orca.host
                     .call('storage.set', { key: STORAGE_STARTED_AT_KEY, value: this.#busySince })
                     .catch(() => { });
@@ -257,7 +296,7 @@ class PresenceRuntime {
         }
         else if (!busy && this.#busySince !== 0) {
             this.#busySince = 0;
-            if (this.#can('storage')) {
+            if (this.#can('storage:own')) {
                 void this.#orca.host.call('storage.delete', { key: STORAGE_STARTED_AT_KEY }).catch(() => { });
             }
         }
@@ -275,6 +314,7 @@ class PresenceRuntime {
         this.#publishTimer.unref?.();
     }
     async #publish() {
+        await this.#ready;
         if (this.#disposed || !this.#settings.enabled || this.#settings.privacy === 'off') {
             return;
         }
@@ -282,15 +322,17 @@ class PresenceRuntime {
             this.#lastError = 'no Discord application id configured';
             return;
         }
+        const settings = this.#settings;
+        const focus = this.#focus;
         const activity = buildActivity({
             state: this.#state,
-            focus: this.#focus,
-            privacy: this.#settings.privacy,
+            focus,
+            privacy: settings.privacy,
             // The host's own start stamp wins over the moment this worker noticed the
             // fleet go busy — see `busyAnchor`. The local stamp stays the fallback.
             startedAt: busyAnchor(this.#state, this.#busySince),
-            header: this.#settings.header,
-            assets: this.#settings.assets,
+            header: settings.header,
+            assets: settings.assets,
             partyId: this.#partyId
         });
         // Why: identical payloads still cost a rate-limit slot, and a fleet can emit
@@ -303,8 +345,18 @@ class PresenceRuntime {
         if (!client) {
             return;
         }
+        if (this.#disposed ||
+            client !== this.#client ||
+            settings !== this.#settings ||
+            (settings.privacy === 'full' && !sameFocus(focus, this.#focus))) {
+            this.#schedulePublish();
+            return;
+        }
         try {
             await client.setActivity(activity);
+            if (client !== this.#client) {
+                return;
+            }
             this.#lastPayload = encoded;
             this.#lastPublishAt = Date.now();
             this.#lastError = null;
@@ -322,11 +374,15 @@ class PresenceRuntime {
             return null;
         }
         this.#connecting = true;
+        const clientId = this.#settings.clientId;
         const client = new DiscordPresenceClient({
-            clientId: this.#settings.clientId,
+            clientId,
             log: (line) => this.#orca.log(line)
         });
         client.onDisconnect = (error) => {
+            if (this.#client !== client) {
+                return;
+            }
             this.#client = null;
             this.#lastPayload = '';
             this.#lastError = describeError(error);
@@ -334,6 +390,11 @@ class PresenceRuntime {
         };
         try {
             await client.connect();
+            if (this.#disposed || clientId !== this.#settings.clientId) {
+                client.close();
+                this.#schedulePublish();
+                return null;
+            }
             this.#client = client;
             this.#reconnectAttempt = 0;
             this.#lastError = null;
@@ -350,7 +411,10 @@ class PresenceRuntime {
         }
     }
     #scheduleReconnect() {
-        if (this.#disposed || this.#reconnectTimer || !this.#settings.enabled) {
+        if (this.#disposed ||
+            this.#reconnectTimer ||
+            !this.#settings.enabled ||
+            this.#settings.privacy === 'off') {
             return;
         }
         const index = Math.min(this.#reconnectAttempt, RECONNECT_DELAYS_MS.length - 1);
@@ -363,7 +427,8 @@ class PresenceRuntime {
         this.#reconnectTimer.unref?.();
     }
     async toggleEnabled() {
-        this.#settings.enabled = !this.#settings.enabled;
+        await this.#ready;
+        this.#settings = { ...this.#settings, enabled: !this.#settings.enabled };
         await this.#saveSetting('enabled', this.#settings.enabled);
         if (this.#settings.enabled) {
             this.#lastPayload = '';
@@ -380,8 +445,9 @@ class PresenceRuntime {
      * when the host passes none.
      */
     async setPrivacy(args) {
+        await this.#ready;
         const requested = readPrivacyArg(args);
-        this.#settings.privacy = requested ?? nextPrivacy(this.#settings.privacy);
+        this.#settings = { ...this.#settings, privacy: requested ?? nextPrivacy(this.#settings.privacy) };
         await this.#saveSetting('privacy', this.#settings.privacy);
         this.#lastPayload = '';
         if (this.#settings.privacy === 'off') {
@@ -399,8 +465,9 @@ class PresenceRuntime {
      */
     async setHeader(args) {
         const requested = readHeaderArg(args);
+        await this.#ready;
         const next = requested ?? nextHeader(this.#settings.header ?? DEFAULT_HEADER);
-        this.#settings.header = next;
+        this.#settings = { ...this.#settings, header: next };
         await this.#saveSetting('header', next);
         this.#lastPayload = '';
         this.#schedulePublish();
@@ -424,6 +491,7 @@ class PresenceRuntime {
      * waiting out the backoff.
      */
     async reconnectNow() {
+        await this.#ready;
         if (this.#reconnectTimer) {
             clearTimeout(this.#reconnectTimer);
             this.#reconnectTimer = null;
@@ -439,8 +507,7 @@ class PresenceRuntime {
         return this.reportStatus();
     }
     async reportStatus() {
-        // The command is an explicit request for current truth; do not make the
-        // user wait for the next 30-second focus poll.
+        await this.#ready;
         await this.#refreshFocus();
         const summary = summarize(this.#state);
         const busySince = busyAnchor(this.#state, this.#busySince);
@@ -541,12 +608,9 @@ class PresenceRuntime {
         if (this.#reconnectTimer) {
             clearTimeout(this.#reconnectTimer);
         }
-        if (this.#focusTimer) {
-            clearInterval(this.#focusTimer);
-        }
+        this.#settingsSubscription?.dispose();
         this.#publishTimer = null;
         this.#reconnectTimer = null;
-        this.#focusTimer = null;
         this.#client?.close();
         this.#client = null;
     }

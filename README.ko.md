@@ -20,7 +20,7 @@ TypeScript로 작성되었고 런타임 의존성이 없다. Discord Rich Presen
 
 ## 요구 사항
 
-- 플러그인 시스템이 켜진 Orca `>= 1.4.0` (Settings → Plugins). 마지막으로 Orca `1.4.230`에서 확인했다. [호환성](#호환성) 참고
+- 플러그인 시스템이 켜진 Orca `>= 1.4.246` (Settings → Plugins). 마지막으로 Orca `1.4.274`에서 확인했다. [호환성](#호환성) 참고
 - 같은 컴퓨터에서 실행 중인 Discord **데스크톱** 앱 (웹 클라이언트는 로컬 IPC 소켓을 열지 않는다)
 
 그 밖에는 필요 없다. 플러그인에 Discord 애플리케이션 id가 포함되어 있어서, 에이전트가 무언가를 하는 순간부터 게시를 시작한다.
@@ -30,10 +30,10 @@ TypeScript로 작성되었고 런타임 의존성이 없다. Discord Rich Presen
 Settings → Plugins → *Add marketplace*에서 아래 URL을 붙여 넣고 동의 대화상자를 수락한다.
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.3.1`이 중요하다. 이것이 없으면 Orca는 계속 바뀌는 `main`에서 인덱스를 읽는다. 대화상자에는 아래의 [권한](#요청하는-권한)이 나열된다. 플러그인을 직접 고쳐 보려면 [개발](#개발)을 참고한다.
+`#v0.4.0`이 중요하다. 이것이 없으면 Orca는 계속 바뀌는 `main`에서 인덱스를 읽는다. 대화상자에는 아래의 [권한](#요청하는-권한)이 나열된다. 플러그인을 직접 고쳐 보려면 [개발](#개발)을 참고한다.
 
 ## 게시되는 내용
 
@@ -127,7 +127,9 @@ Rich Presence 애플리케이션 id는 공개 식별자다. 모든 클라이언�
 
 ### 설정 파일
 
-Orca에는 아직 플러그인별 설정 UI가 없으므로, 명령으로 다룰 수 없는 것은 직접 파일에 적는다.
+**Settings → Plugins → Discord Presence**에서 설정을 바꿀 수 있다. Orca 화면에서 바꾼 값은 플러그인 실행 중에도 반영된다.
+
+저장된 JSON을 직접 편집할 수도 있다. 파일을 직접 편집한 뒤에는 Orca를 다시 시작하거나 플러그인을 다시 로드한다.
 
 | 플랫폼 | 경로 |
 | --- | --- |
@@ -165,64 +167,27 @@ Orca에는 아직 플러그인별 설정 UI가 없으므로, 명령으로 다룰
 
 | 권한 | 이유 |
 | --- | --- |
-| `workspace:read` | `full` 프라이버시에서 쓰는 포커스된 워크스페이스 이름과 브랜치 |
-| `events:subscribe` | worktree 생명주기와 에이전트 상태 변화 — 게시되는 데이터 자체 |
-| `storage` | 플릿 상태가 워커 회수 후에도 살아남도록 (아래 참고) |
+| `workspace:read` | 포커스된 워크스페이스 정보와 워크스페이스 이벤트 |
+| `agent:read` | 에이전트 상태 변화 |
+| `storage:own` | 플릿 상태가 워커 회수 후에도 살아남도록 (아래 참고) |
 | `settings:own` | 플러그인 자신의 `enabled` / `privacy` / `clientId` / `header` / 아트워크 키 |
 | `notifications:show` | 명령 결과 알림 |
 
-`secrets`와 `terminal:send`는 일부러 **요청하지 않는다**.
+`secrets:own`와 `terminal:send`는 일부러 **요청하지 않는다**.
 
 ## 호환성
 
-2026-10-20에 최신 안정 데스크톱 릴리스 [`v1.4.230`](https://github.com/stablyai/orca/releases/tag/v1.4.230)과 `912c130` 시점의 Orca `main`을 기준으로 확인했다(`main` 자체의 패키지 버전은 `1.4.214`로 되어 있다. 릴리스 계열과 `main`은 번호를 따로 매기므로, 의미 있는 비교 기준은 그 번호가 아니라 소스의 동일성이다).
+Orca [v1.4.274](https://github.com/stablyai/orca/releases/tag/v1.4.274)와 Orca `main`의 `bc471d51`에서 플러그인 계약을 확인했다. 매니페스트 형식 2의 설정과 포커스 이벤트를 쓰려면 Orca 1.4.246 이상이 필요하다.
 
-`v1.4.192` 확인 시점 이후 플러그인에 영향을 주는 변경 하나가 릴리스에 들어갔고, 이 버전은 그 위에 만들어졌다.
+`full` 프라이버시에서는 Orca의 `workspace.changed` 이벤트가 들어오면 기존 게시 간격에 맞춰 Discord 카드의 워크스페이스와 브랜치를 갱신한다. 시작할 때와 **Show Connection Status**, **Reconnect**를 실행할 때도 현재 정보를 읽는다.
 
-- **`plugin-events.ts` — `agent.status.changed`에 `mainAgent`가 추가되었다.** 이벤트의 `state`는 원래부터 Orca의 *결합* 상태였다. `working`은 메인 에이전트가 이미 끝났어도 살아 있는 서브에이전트가 있으면 해당된다. 새로 생긴 선택적 필드 `mainAgent`는 메인 에이전트 자체의 `state`, 마지막으로 끝난 턴의 `outcome`, 그리고 호스트가 찍은 `stateStartedAt`을 담는다. 이 플러그인은 이제 세 가지를 모두 사용한다. [플릿 줄](#플릿-줄)과 [경과 타이머](#경과-타이머) 참고.
-
-그 밖에 바뀐 것은 모두 리팩터링이며, 읽어 보고 무해하다고 판단했다.
-
-- **`plugin-manifest.ts`** — `isQualifiedPluginKey`, `pluginPanelTabKey`, `isPluginPanelTabKey`가 새 파일 `plugin-tab-key.ts`로 옮겨지고 다시 export된다(릴리스됨). `main`에서는 추가로 스키마 객체에 `pluginManifestV1Object`라는 이름이 붙었고, `contributes`의 기본값이 직접 쓴 리터럴 대신 `prefault({})`로 채워진다. 빈 배열 일곱 개로 동일하며, 이 플러그인처럼 `contributes`를 직접 선언하는 매니페스트에는 아무 영향이 없다.
-- **`plugin-marketplace.ts`** (`main`에만 있음) — 필드 맵이 추출되었고, 카테고리 중복과 id 중복 검사에 이름이 붙었다. 규칙은 같다.
-
-둘 다 필드 이름을 바꾸거나 검증 대상을 바꾸지는 않지만, 사전 작업처럼 보인다. 명시적으로 *V1*이라 이름 붙은 스키마 객체, 그리고 이제 파일 이름을 매개변수로 받는 마켓플레이스 리더가 그렇다.
-
-Orca는 패널별로 아는 정보를 계속 늘리고 있다. `main`은 상태 행에 `programStatus` 항목(프로그램 자체의 OSC 7501 진행률, 메시지, 블록)을 추가했다. 하지만 플러그인에 전달되는 투영은 바뀌지 않았으므로 그중 어느 것도 `agent.status.changed`에 도달하지 않는다. 네 필드와 `mainAgent`가 여전히 이벤트의 전부다.
-
-엔진 하한은 `>=1.4.0`으로 유지한다. 모든 계약 변경이 추가적이고 `mainAgent`는 선택 사항이므로, 이를 보내지 않는 호스트에서 플러그인은 이전과 똑같이 동작한다.
-
-업스트림을 다시 읽고 변경이 없음을 확인했다. 아래는 `src/lib/orca-api.mts`가 옮겨 적은 계약들이다.
-
-| 업스트림 계약 | 상태 |
-| --- | --- |
-| Host API v0 메서드 표 (`plugin-host-api.ts`) | 메서드 13개, 모두 여전히 `experimental`. `workspace.readContext`는 여전히 `{ branch, displayName, terminals }`를 반환한다 |
-| 이벤트 집합 (`plugin-events.ts`) | 여전히 worktree/에이전트 이벤트 세 개뿐이며 포커스 변경 이벤트는 없다. `agent.status.changed`는 이제 선택적 `mainAgent`도 담는다 |
-| 권한 종류 (`plugin-capabilities.ts`) | 여전히 범위 없는 종류 일곱 개. 여전히 `net:*` 없음 |
-| 에이전트 상태 (`agent-status-types.ts`) | 여전히 `working` / `blocked` / `waiting` / `done`. 행의 풍부한 내부 정보 중 플러그인 이벤트 페이로드에 도달하는 것은 `mainAgent`뿐이다 |
-| 워커 환경 (`plugin-worker-env.ts`) | 여전히 `XDG_RUNTIME_DIR`이 빠진 허용 목록 |
-| 유휴 회수 (`plugin-host-protocol.ts`) | 여전히 5분 |
-| 설정과 저장소 위치 | 여전히 `<userData>/plugins-data/<publisher>.<id>/` |
-| 매니페스트와 마켓플레이스 스키마 | 스키마 변경 없음 (`plugin-manifest.ts`의 변화는 헬퍼 이동). `commands[].context`는 여기서 선언한다 |
-
-`orca-compatibility.json`은 검토한 Git blob id를 기록한다. 읽기 전용인 **Orca compatibility** 워크플로가 매주 월요일 최신 안정 릴리스와 `main`을 확인한다. 파일이 바뀌지 않았더라도 새 안정 버전이 나오거나, 어느 쪽 ref에서든 계약이 바뀌면 실패하여 이 절과 직접 작성한 API 타입을 다시 검토하게 만든다. 같은 검사를 로컬에서 `npm run check:orca-compatibility`로 실행할 수 있다(공개 GitHub API에 대한 네트워크 접근이 필요하다).
-
-`main`은 릴리스보다 몇 주 앞서 가므로, 어떤 파일은 출시되기 한참 전부터 그곳에서 바뀐 채로 있을 수 있다. 그런 미출시 객체 id는 읽고 난 뒤 `verifiedMain`에 넣는다. 그러면 검사는 그 id에 대해 조용히 넘어가지만, `main`이 그 id를 지나 움직이는 순간 다시 실패하고, `main`이 릴리스된 id로 되돌아오면 그 재정의가 쓸모없어졌다고 알린다. 아무도 지우지 않는 재정의는 다음에 그 경로에 들어오는 무엇이든 계속 눈감아 줄 것이기 때문이다.
-
-매니페스트에 넣을 수 있지만 일부러 넣지 않은 기여(contribution) 종류:
-
-- **`keybindings`** — [단축키](#단축키) 참고.
-- **`panels`** — 샌드박스된 패널은 `workspace.readContext`, `terminal.sendText`, `notifications.show`만 호출할 수 있다. 플러그인 저장소와 설정은 워커 전용이므로, 프레즌스 패널은 플러그인이 무엇을 게시하는지 읽을 수 없다. 아직 표시할 것이 없다.
-- **`languagePacks`, `vmRecipes`, `agents`** — 다른 종류의 플러그인을 위한 콘텐츠 팩이다.
-- **`icon`** — 호스트가 검증은 하지만, 아직 플러그인 목록 어디에도 표시되지 않는다.
+`orca-compatibility.json`에 검토한 Git 객체 ID를 기록한다. `npm run check:orca-compatibility`로 최신 안정판과 `main`을 기준과 비교할 수 있다. GitHub에서도 매주 같은 검사를 실행한다.
 
 ## 알려진 제약
 
 **상태는 설계상 일시적이다.** Orca는 진행 중인 작업이 없는 플러그인 워커를 5분 뒤 회수하고(`PLUGIN_WORKER_IDLE_REAP_MS`) 다음 이벤트가 오면 다시 띄운다. 워커는 스스로를 살려 둘 수 없다. 유휴 시계를 갱신하는 것은 호스트→워커 통신뿐이다. 그래서 프레즌스는 플릿이 활동하는 동안 나타나고, 몇 분간 조용하면 사라졌다가, 다음 에이전트 이벤트에 다시 나타난다. 플릿 상태는 플러그인 저장소에 저장되므로 그 사이에 잃는 것은 없으며, 6시간보다 오래된 상태는 아직 살아 있는 것처럼 복원하지 않고 버린다.
 
-**포커스된 워크스페이스는 푸시가 아니라 폴링으로 얻는다.** Orca는 포커스 변경 이벤트를 보내지 않으므로, `full` 프라이버시에서는 30초마다 워크스페이스와 브랜치를 새로 읽고 다시 게시한다. **Show Connection Status**와 **Reconnect**는 즉시 새로 읽는다.
-
-**명령 인자는 호스트에 달려 있다.** Orca가 인자를 전달해 주면 **Set Header**는 문자열이나 `{ header }`를, **Cycle Privacy Level**은 단계나 `{ privacy }`를 받는다. `1.4.192` 기준으로 이를 전달하는 호스트 경로는 없다. IPC는 인자를 실어 나르지만, 팔레트와 기록된 단축키 모두 인자 없이 명령을 호출한다. 이것이 바뀌기 전까지는 순환이 유일한 인터페이스이며, 자유로운 헤더는 설정 파일에 적어야 한다.
+명령 팔레트와 단축키는 인자 없이 명령을 호출한다. 사용자 지정 헤더는 플러그인 설정에서 입력한다.
 
 **작업 시작 시각은 에이전트 자신의 호스트에서 온다.** `mainAgent.stateStartedAt`은 에이전트가 실행되는 컴퓨터가 찍으므로, 시계가 어긋난 SSH 호스트는 Discord 타이머를 움직일 수 있다. 이 컴퓨터보다 1분 넘게 앞서거나 하루보다 오래된 시각은 버리고 로컬에서 관찰한 시점을 쓴다. 그보다 적게 어긋난 시계는 어긋난 만큼 경과 시간을 밀어낸다.
 
@@ -241,7 +206,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (99 tests)
+npm test           # build + node --test
 npm run typecheck  # no emit
 ```
 

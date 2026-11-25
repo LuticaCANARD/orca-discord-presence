@@ -26,12 +26,13 @@ function createFakeOrca({
   const logs = []
   const stored = { ...settings }
   let focusedWorkspace = workspace
+  let onSettingChanged
 
   const orca = {
     grantedCapabilities: capabilities ?? [
       'workspace:read',
-      'events:subscribe',
-      'storage',
+      'agent:read',
+      'storage:own',
       'settings:own',
       'notifications:show'
     ],
@@ -41,6 +42,12 @@ function createFakeOrca({
         const list = events.get(name) ?? []
         list.push(handler)
         events.set(name, list)
+      }
+    },
+    settings: {
+      onDidChange(listener) {
+        onSettingChanged = listener
+        return { dispose: () => { onSettingChanged = undefined } }
       }
     },
     host: {
@@ -85,6 +92,10 @@ function createFakeOrca({
     },
     invoke: (id, args) => commands.get(id)?.(args),
     commandIds: () => [...commands.keys()],
+    changeSetting(key, value) {
+      stored[key] = value
+      onSettingChanged?.({ key })
+    },
     setWorkspace: (next) => {
       focusedWorkspace = next
     }
@@ -112,8 +123,8 @@ test('survives with Discord absent', async () => {
   const fake = createFakeOrca()
   await activate(fake.orca)
   await settle()
-  await fake.emit('worktree.created', {
-    worktreeId: 'w1',
+  await fake.emit('workspace.created', {
+    workspaceId: 'w1',
     path: '/repos/app',
     branch: 'feat/presence'
   })
@@ -464,7 +475,7 @@ test('stored settings are honoured on activate', async () => {
 })
 
 test('a narrowed capability grant skips every host call it cannot make', async () => {
-  const fake = createFakeOrca({ capabilities: ['events:subscribe'] })
+  const fake = createFakeOrca({ capabilities: ['agent:read'] })
   await activate(fake.orca)
   await settle()
   await fake.emit('agent.status.changed', {
@@ -495,10 +506,57 @@ test('malformed events do not take the worker down', async () => {
   await activate(fake.orca)
   await settle()
   await fake.emit('agent.status.changed', null)
-  await fake.emit('worktree.created', { worktreeId: '' })
+  await fake.emit('workspace.created', { worktreeId: '' })
   await fake.emit('worktree.removed', undefined)
   await settle()
   const status = await fake.invoke('presence.status')
   assert.equal(status.summary.panes, 0)
+  await deactivate()
+})
+
+test('applies settings changed through Orca without reactivating the worker', async () => {
+  const fake = createFakeOrca()
+  activate(fake.orca)
+  await settle()
+  fake.changeSetting('privacy', 'full')
+  fake.changeSetting('header', '{workspace}')
+  await settle()
+  const status = await fake.invoke('presence.status')
+  assert.equal(status.privacy, 'full')
+  assert.equal(status.headerText, 'orca-discord-presence')
+  await deactivate()
+})
+
+test('accepts current workspace lifecycle payloads and removes their agents', async () => {
+  const fake = createFakeOrca({ settings: { privacy: 'full' } })
+  activate(fake.orca)
+  await fake.emit('workspace.created', { workspaceId: 'w1', path: '/repos/app', branch: 'main' })
+  await fake.emit('agent.status.changed', {
+    workspaceId: 'w1', paneKey: 'p1', state: 'working', receivedAt: Date.now()
+  })
+  await settle()
+  const before = await fake.invoke('presence.status')
+  assert.equal(before.summary.activeWorktrees, 1)
+  assert.equal(before.summary.worktrees, 1)
+  await fake.emit('workspace.removed', { workspaceId: 'w1', path: '/repos/app' })
+  await settle()
+  const after = await fake.invoke('presence.status')
+  assert.equal(after.summary.panes, 0)
+  assert.equal(after.summary.worktrees, 0)
+  await deactivate()
+})
+
+test('a focus event supersedes a workspace read already in flight', async () => {
+  const fake = createFakeOrca({ settings: { privacy: 'full', header: '{workspace}' } })
+  activate(fake.orca)
+  await settle()
+
+  const report = fake.invoke('presence.status')
+  await Promise.resolve()
+  const event = fake.emit('workspace.changed', {
+    context: { branch: 'main', displayName: 'new-focus', terminals: [] }
+  })
+  await event
+  assert.equal((await report).headerText, 'new-focus')
   await deactivate()
 })

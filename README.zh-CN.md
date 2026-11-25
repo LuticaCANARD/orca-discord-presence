@@ -20,7 +20,7 @@
 
 ## 运行要求
 
-- Orca `>= 1.4.0`，并已启用插件系统（Settings → Plugins）——最近一次针对 Orca `1.4.230` 验证，参见[兼容性](#兼容性)
+- Orca `>= 1.4.246`，并已启用插件系统（Settings → Plugins）——最近一次针对 Orca `1.4.274` 验证，参见[兼容性](#兼容性)
 - 在同一台机器上运行 Discord **桌面**客户端（网页版不提供本地 IPC 套接字）
 
 除此之外不需要任何东西。插件自带一个 Discord 应用 id，只要有智能体开始工作就会立即发布状态。
@@ -30,10 +30,10 @@
 Settings → Plugins → *Add marketplace*，粘贴下面的 URL，然后接受授权对话框：
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.3.1` 这一部分很重要：没有它，Orca 会从不断变化的 `main` 分支读取索引。对话框中会列出下文的[所请求的权限](#所请求的权限)。如果你想修改插件本身，请参见[开发](#开发)。
+`#v0.4.0` 这一部分很重要：没有它，Orca 会从不断变化的 `main` 分支读取索引。对话框中会列出下文的[所请求的权限](#所请求的权限)。如果你想修改插件本身，请参见[开发](#开发)。
 
 ## 会发布哪些内容
 
@@ -127,7 +127,9 @@ Rich Presence 应用 id 是公开标识符——它出现在每个客户端的 I
 
 ### 设置文件
 
-Orca 目前还没有按插件区分的设置界面，因此命令覆盖不到的设置需要手动编写：
+在 **Settings → Plugins → Discord Presence** 中编辑设置。在 Orca 中所做的更改会在插件运行时生效。
+
+也可以直接编辑保存的 JSON 文件。直接编辑后，请重启 Orca 或重新加载插件。
 
 | 平台 | 路径 |
 | --- | --- |
@@ -165,64 +167,27 @@ Orca 目前还没有按插件区分的设置界面，因此命令覆盖不到的
 
 | 权限 | 原因 |
 | --- | --- |
-| `workspace:read` | 读取当前聚焦的工作区名称和分支，用于 `full` 隐私级别 |
-| `events:subscribe` | worktree 生命周期和智能体状态变化——即要发布的数据 |
-| `storage` | 让集群状态在工作进程被回收后得以保留（见下文） |
+| `workspace:read` | 当前工作区信息与工作区事件 |
+| `agent:read` | 智能体状态变化 |
+| `storage:own` | 让集群状态在工作进程被回收后得以保留（见下文） |
 | `settings:own` | 插件自身的 `enabled` / `privacy` / `clientId` / `header` / 美术资源 key |
 | `notifications:show` | 命令的反馈 |
 
-`secrets` 和 `terminal:send` 被刻意**不**申请。
+`secrets:own` 和 `terminal:send` 被刻意**不**申请。
 
 ## 兼容性
 
-于 2026-10-20 针对最新的稳定桌面版 [`v1.4.230`](https://github.com/stablyai/orca/releases/tag/v1.4.230) 以及 Orca `main` 的 `912c130` 进行了检查（后者自身的 package 版本号为 `1.4.214`；发布线和 `main` 各自独立编号，因此有意义的比较是源码是否一致，而不是这个数字）。
+已核对 Orca [v1.4.274](https://github.com/stablyai/orca/releases/tag/v1.4.274) 与 Orca `main` 的 `bc471d51` 中的插件接口。清单格式 2 的设置和焦点事件需要 Orca 1.4.246 或更高版本。
 
-自 `v1.4.192` 检查点以来，有一项面向插件的变更已进入正式发布，本版本正是基于它构建的：
+在 `full` 隐私级别下，Orca 的 `workspace.changed` 事件会按正常发布间隔更新 Discord 卡片上的工作区和分支。启动时以及运行 **Show Connection Status** 和 **Reconnect** 时也会读取当前信息。
 
-- **`plugin-events.ts` —— `agent.status.changed` 新增了 `mainAgent`。** 该事件的 `state` 一直是 Orca 的*合并*状态：`working` 也涵盖主智能体已结束、但子智能体仍在运行的情况。新增的可选字段 `mainAgent` 携带主智能体自身的 `state`、其最近一次完成回合的 `outcome`，以及由宿主打上的 `stateStartedAt`。本插件现在三者都会使用——参见[集群状态行](#集群状态行)和[已用时间计时器](#已用时间计时器)。
-
-其他变动都是重构，已阅读并判定为无害：
-
-- **`plugin-manifest.ts`** —— `isQualifiedPluginKey`、`pluginPanelTabKey` 和 `isPluginPanelTabKey` 移到了新的 `plugin-tab-key.ts` 并重新导出（已发布）。在 `main` 上，schema 对象另外被命名为 `pluginManifestV1Object`，`contributes` 的默认值改为通过 `prefault({})` 提供，而不是手写的字面量——仍是同样的七个空数组，对于像本插件这样自行声明了 `contributes` 的清单则完全没有影响。
-- **`plugin-marketplace.ts`**（仅 `main`）—— 提取了字段映射，并为重复分类和重复 id 的校验规则起了名字。规则本身不变。
-
-两者都没有重命名字段，也没有改变校验内容，但看起来都像是在打基础：一个明确标注为 *V1* 的 schema 对象，以及一个现在以文件名为参数的 marketplace 读取器。
-
-Orca 持续丰富它对每个窗格掌握的信息——`main` 为状态行新增了 `programStatus` 维度（程序自身的 OSC 7501 进度、消息和区块）——但面向插件的投影没有变化，因此这些都不会进入 `agent.status.changed`。四个字段加上 `mainAgent` 仍然是该事件的全部内容。
-
-引擎下限保持为 `>=1.4.0`：所有契约变更都是增量的，而且 `mainAgent` 是可选的，所以在不发送它的宿主上，插件的行为与以前完全相同。
-
-重新阅读上游后确认未变化的部分——这些就是 `src/lib/orca-api.mts` 所转录的契约：
-
-| 上游契约 | 状态 |
-| --- | --- |
-| Host API v0 方法表（`plugin-host-api.ts`） | 13 个方法，仍全部为 `experimental`；`workspace.readContext` 仍返回 `{ branch, displayName, terminals }` |
-| 事件集（`plugin-events.ts`） | 仍是三个 worktree/智能体事件——没有焦点变化事件；`agent.status.changed` 现在还携带可选的 `mainAgent` |
-| 权限种类（`plugin-capabilities.ts`） | 仍是七种不带作用域的种类；仍没有 `net:*` |
-| 智能体状态（`agent-status-types.ts`） | 仍是 `working` / `blocked` / `waiting` / `done`；状态行更丰富的内部信息中只有 `mainAgent` 进入插件事件的数据 |
-| 工作进程环境（`plugin-worker-env.ts`） | 仍是不含 `XDG_RUNTIME_DIR` 的白名单 |
-| 空闲回收（`plugin-host-protocol.ts`） | 仍为 5 分钟 |
-| 设置与存储位置 | 仍为 `<userData>/plugins-data/<publisher>.<id>/` |
-| 清单与 marketplace 的 schema | schema 未变（`plugin-manifest.ts` 的改动只是辅助函数的移动）；`commands[].context` 在本插件中有声明 |
-
-`orca-compatibility.json` 记录了已审阅的 Git blob id。只读的 **Orca compatibility** 工作流每周一检查最新稳定版和 `main`；只要出现新的稳定版本（即使文件没有变化），或任一 ref 中出现契约漂移，它就会失败，从而迫使本节和手写的 API 类型被重新审阅。可以用 `npm run check:orca-compatibility` 在本地运行同样的检查（需要能访问公开的 GitHub API）。
-
-`main` 领先于正式发布数周，所以某个文件可能在那里早已改变，却很久之后才发布。这些尚未发布的对象 id 在阅读过之后会被放进 `verifiedMain`：检查随后不再对它们报错，但一旦 `main` 越过它们就会立即失败；而当 `main` 回到已发布的 id 时，会把该覆盖项标记为已过时——一个没人清理的覆盖项，会继续为之后落到该路径上的任何内容开脱。
-
-清单本可以包含、但被刻意省略的贡献类型：
-
-- **`keybindings`** —— 参见[快捷键](#快捷键)。
-- **`panels`** —— 沙箱化的面板只能调用 `workspace.readContext`、`terminal.sendText` 和 `notifications.show`。插件的存储和设置仅工作进程可用，因此 presence 面板无法读取插件正在发布的内容；目前没有什么可显示的。
-- **`languagePacks`、`vmRecipes`、`agents`** —— 面向其他类型插件的内容包。
-- **`icon`** —— 宿主会校验它，但插件列表中目前还没有任何地方显示它。
+`orca-compatibility.json` 记录已核对的 Git 对象 ID。运行 `npm run check:orca-compatibility` 可将最新稳定版和 `main` 与基准比较。GitHub 每周也会运行同一检查。
 
 ## 已知限制
 
 **状态在设计上就是临时的。** Orca 会在插件工作进程没有进行中的任务 5 分钟后将其回收（`PLUGIN_WORKER_IDLE_REAP_MS`），并在下一个事件到来时重新启动。工作进程无法让自己保持存活——只有宿主→工作进程的通信才会刷新空闲计时。因此，状态会在你的集群活跃时出现，在安静几分钟后消失，并在下一个智能体事件时重新出现。集群状态会持久化到插件存储中，所以在这段间隙中不会丢失任何东西；超过六小时的状态会被丢弃，而不会被当作仍然有效的状态恢复。
 
-**聚焦的工作区是轮询获取的，而非推送。** Orca 不会发出焦点变化事件，因此在 `full` 隐私级别下，每 30 秒刷新并重新发布一次工作区和分支。**Show Connection Status** 和 **Reconnect** 会立即刷新它。
-
-**命令参数取决于宿主。** 当 Orca 传递参数时，**Set Header** 接受字符串或 `{ header }`，**Cycle Privacy Level** 接受级别或 `{ privacy }`。截至 `1.4.192`，没有任何宿主路径会传递参数：命令面板和录制的快捷键在调用命令时都不带参数，尽管 IPC 本身可以携带参数。在这一点改变之前，循环切换就是全部的操作方式，自定义标题行需要写在设置文件中。
+命令面板和快捷键调用命令时不传参数。可在插件设置中输入自定义标题。
 
 **工作开始时间戳来自智能体自身所在的主机。** `mainAgent.stateStartedAt` 由智能体运行所在的机器打上时间戳，因此时钟偏差的 SSH 主机可能会让 Discord 的计时器出现偏移。比本机快一分钟以上或早于一天以上的时间戳会被拒绝，改用本地观察到的时刻；偏差小于这个范围的时钟，会让已用时间的读数偏移相同的量。
 
@@ -241,7 +206,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (99 tests)
+npm test           # build + node --test
 npm run typecheck  # no emit
 ```
 

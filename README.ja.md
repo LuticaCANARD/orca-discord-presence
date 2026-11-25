@@ -20,7 +20,7 @@ TypeScript 製で、実行時の依存関係はない。Discord Rich Presence �
 
 ## 要件
 
-- プラグインシステムを有効にした Orca `>= 1.4.0`（Settings → Plugins）。最後に検証したのは Orca `1.4.230`。[互換性](#互換性) を参照
+- プラグインシステムを有効にした Orca `>= 1.4.246`（Settings → Plugins）。最後に検証したのは Orca `1.4.274`。[互換性](#互換性) を参照
 - 同じマシン上で動作している Discord **デスクトップ** アプリ（Web クライアントはローカル IPC ソケットを公開しない）
 
 それ以外は何も要らない。プラグインには Discord アプリケーション ID が同梱されており、エージェントが何か動き出した時点で公開を始める。
@@ -30,10 +30,10 @@ TypeScript 製で、実行時の依存関係はない。Discord Rich Presence �
 Settings → Plugins → *Add marketplace* を開き、URL を貼り付けて同意ダイアログを承認する。
 
 ```text
-https://github.com/LuticaCANARD/orca-discord-presence.git#v0.3.1
+https://github.com/LuticaCANARD/orca-discord-presence.git#v0.4.0
 ```
 
-`#v0.3.1` は重要である。これがないと Orca は `main` からインデックスを読み、`main` は動き続ける。ダイアログには後述の [権限](#要求する権限) が一覧表示される。プラグイン自体に手を入れたい場合は [開発](#開発) を参照。
+`#v0.4.0` は重要である。これがないと Orca は `main` からインデックスを読み、`main` は動き続ける。ダイアログには後述の [権限](#要求する権限) が一覧表示される。プラグイン自体に手を入れたい場合は [開発](#開発) を参照。
 
 ## 公開される内容
 
@@ -127,7 +127,9 @@ Rich Presence のアプリケーション ID は公開された識別子であ�
 
 ### 設定ファイル
 
-Orca にはまだプラグインごとの設定 UI がないため、コマンドで扱えないものは手で書く。
+**Settings → Plugins → Discord Presence** で設定を編集できる。Orca での変更はプラグインの実行中に反映される。
+
+保存された JSON を直接編集することもできる。ファイルを編集した後は Orca を再起動するか、プラグインを再読み込みする。
 
 | プラットフォーム | パス |
 | --- | --- |
@@ -165,64 +167,27 @@ Orca にはまだプラグインごとの設定 UI がないため、コマン�
 
 | 権限 | 理由 |
 | --- | --- |
-| `workspace:read` | `full` プライバシー用の、フォーカス中のワークスペース名とブランチ |
-| `events:subscribe` | ワークツリーのライフサイクルとエージェントの状態変化。公開するデータそのもの |
-| `storage` | フリートの状態をワーカーの回収後も保持する（後述） |
+| `workspace:read` | フォーカス中のワークスペース情報とワークスペースイベント |
+| `agent:read` | エージェントの状態変化 |
+| `storage:own` | フリートの状態をワーカーの回収後も保持する（後述） |
 | `settings:own` | プラグイン自身の `enabled` / `privacy` / `clientId` / `header` / 画像キー |
 | `notifications:show` | コマンドへのフィードバック |
 
-`secrets` と `terminal:send` は意図的に **要求していない**。
+`secrets:own` と `terminal:send` は意図的に **要求していない**。
 
 ## 互換性
 
-2026-10-20 に、最新の安定版デスクトップリリース [`v1.4.230`](https://github.com/stablyai/orca/releases/tag/v1.4.230) と、`912c130` 時点の Orca `main` に対して確認した（`main` 自身のパッケージバージョンは `1.4.214` となっている。リリース系列と `main` はそれぞれ別に番号を振っているので、意味のある比較はその番号ではなくソースの同一性である）。
+Orca [v1.4.274](https://github.com/stablyai/orca/releases/tag/v1.4.274) と Orca `main` の `bc471d51` でプラグインの契約を確認した。マニフェスト形式 2 の設定とフォーカスイベントには Orca 1.4.246 以降が必要。
 
-`v1.4.192` のチェックポイント以降、プラグインに影響する変更が 1 件リリースに入っており、このバージョンはそれを前提に作られている。
+`full` プライバシーでは、Orca の `workspace.changed` イベントに応じて、通常の更新間隔で Discord カードのワークスペースとブランチを更新する。起動時と **Show Connection Status**、**Reconnect** の実行時にも現在の情報を取得する。
 
-- **`plugin-events.ts` — `agent.status.changed` に `mainAgent` が追加された。** このイベントの `state` は以前から Orca の *合成* 状態であり、`working` にはメインエージェントがすでに落ち着いた後も生きているサブエージェントが含まれる。新しい省略可能な `mainAgent` は、メインエージェント自身の `state`、最後に終えたターンの `outcome`、ホストが記録した `stateStartedAt` を運ぶ。このプラグインは現在この 3 つすべてを使っている。[フリート行](#フリート行) と [経過タイマー](#経過タイマー) を参照。
-
-それ以外に変わったものはリファクタリングであり、読んだうえで無害と判断した。
-
-- **`plugin-manifest.ts`** — `isQualifiedPluginKey`、`pluginPanelTabKey`、`isPluginPanelTabKey` が新しい `plugin-tab-key.ts` に移動し、再エクスポートされている（リリース済み）。`main` ではさらに、スキーマオブジェクトに `pluginManifestV1Object` という名前が付き、`contributes` の既定値が手書きのリテラルではなく `prefault({})` で与えられるようになった。中身は同じ 7 つの空配列であり、このプラグインのように `contributes` を自分で宣言しているマニフェストには何の影響もない。
-- **`plugin-marketplace.ts`**（`main` のみ） — フィールドのマップが切り出され、カテゴリ重複と ID 重複の検査に名前が付いた。ルールは同じである。
-
-どちらもフィールド名の変更や検証内容の変更はないが、どちらも下準備のように読める。明示的に *V1* と名付けられたスキーマオブジェクトと、ファイル名でパラメータ化されたマーケットプレイスの読み込み処理である。
-
-Orca はペインごとに把握する情報を増やし続けている。`main` はステータス行に `programStatus` という要素（プログラム自身の OSC 7501 による進捗、メッセージ、ブロック）を追加した。しかしプラグイン向けの射影は変わっていないので、そのどれも `agent.status.changed` には届かない。4 つのフィールドと `mainAgent` が、依然としてイベントのすべてである。
-
-エンジンの下限は `>=1.4.0` のままである。どの契約も追加的であり、`mainAgent` は省略可能なので、それを送らないホストでもプラグインは以前とまったく同じように動作する。
-
-上流を読み直し、変化がないことを確認したもの。これらが `src/lib/orca-api.mts` に書き写している契約である。
-
-| 上流の契約 | 状態 |
-| --- | --- |
-| Host API v0 のメソッド表（`plugin-host-api.ts`） | 13 メソッド、すべて依然 `experimental`。`workspace.readContext` は依然として `{ branch, displayName, terminals }` を返す |
-| イベント集合（`plugin-events.ts`） | 依然としてワークツリー／エージェントの 3 イベントのみで、フォーカス変更イベントはない。`agent.status.changed` は省略可能な `mainAgent` も運ぶようになった |
-| 権限の種類（`plugin-capabilities.ts`） | 依然としてスコープなしの 7 種類。`net:*` は依然としてない |
-| エージェントの状態（`agent-status-types.ts`） | 依然として `working` / `blocked` / `waiting` / `done`。行の豊富な内部情報のうち、プラグインのイベントペイロードに届くのは `mainAgent` だけ |
-| ワーカーの環境（`plugin-worker-env.ts`） | 依然として `XDG_RUNTIME_DIR` を含まない許可リスト |
-| アイドル時の回収（`plugin-host-protocol.ts`） | 依然として 5 分 |
-| 設定とストレージの場所 | 依然として `<userData>/plugins-data/<publisher>.<id>/` |
-| マニフェストとマーケットプレイスのスキーマ | スキーマは変更なし（`plugin-manifest.ts` の変化はヘルパーの移動）。`commands[].context` はここで宣言している |
-
-`orca-compatibility.json` には、確認済みの Git blob ID が記録されている。読み取り専用の **Orca compatibility** ワークフローは、毎週月曜日に最新の安定版リリースと `main` を確認する。新しい安定版が出たとき（ファイルに変化がなくても）や、どちらかの参照で契約が変化したときに失敗し、この節と手書きの API 型の見直しを強制する。同じ確認は `npm run check:orca-compatibility` でローカルでも実行できる（公開 GitHub API へのネットワークアクセスが必要）。
-
-`main` はリリースより数週間先行しているため、ファイルが `main` で変更されたまま、リリースされるまで長い間そのままになることがある。そうした未リリースのオブジェクト ID は、読んだ後に `verifiedMain` に入れる。すると確認はそれについては黙っているが、`main` がその先へ進んだ瞬間に失敗し、`main` がリリース済みの ID に戻ったときにはその上書きを不要として指摘する。誰も消さない上書きは、次にそのパスに入ってくるものを何であれ見逃し続けてしまうからである。
-
-マニフェストに含められるが、意図的に含めていない貢献（contribution）の種類：
-
-- **`keybindings`** — [ショートカット](#ショートカット) を参照。
-- **`panels`** — サンドボックス化されたパネルが呼べるのは `workspace.readContext`、`terminal.sendText`、`notifications.show` だけである。プラグインのストレージと設定はワーカー専用なので、プレゼンス用のパネルはプラグインが何を公開しているかを読めない。まだ表示するものがない。
-- **`languagePacks`、`vmRecipes`、`agents`** — 別の種類のプラグイン向けのコンテンツパック。
-- **`icon`** — ホストは検証するが、プラグイン一覧にはまだどこにも表示されない。
+`orca-compatibility.json` に確認済みの Git オブジェクト ID を記録している。`npm run check:orca-compatibility` で最新の安定版と `main` を基準と比較できる。GitHub でも毎週同じチェックを実行する。
 
 ## 既知の制限
 
 **ステータスは設計上、一時的なものである。** Orca は、処理中の作業がないまま 5 分経ったプラグインワーカーを回収し（`PLUGIN_WORKER_IDLE_REAP_MS`）、次のイベントで再起動する。ワーカーは自分自身を生かし続けることができず、アイドル時計をリセットするのはホストからワーカーへの通信だけである。そのためプレゼンスはフリートが活動している間に現れ、静かな時間が数分続くと消え、次のエージェントイベントで戻ってくる。フリートの状態はプラグインストレージに保存されるので、その間に何かが失われることはない。また、6 時間より古いステータスは、まだ有効であるかのように復元されることなく破棄される。
 
-**フォーカス中のワークスペースは通知ではなくポーリングで取得する。** Orca はフォーカス変更イベントを出さないので、`full` プライバシーではワークスペースとブランチを 30 秒ごとに更新して再公開する。**Show Connection Status** と **Reconnect** はそれを即座に更新する。
-
-**コマンド引数はホスト次第である。** Orca が引数を渡してくれれば、**Set Header** は文字列または `{ header }` を、**Cycle Privacy Level** はレベルまたは `{ privacy }` を受け付ける。`1.4.192` の時点では、それを渡すホスト側の経路は存在しない。IPC は引数を運べるにもかかわらず、パレットも記録されたショートカットも引数なしでコマンドを呼び出す。それが変わるまでは順送りの切り替えが唯一の操作手段であり、自由なヘッダーは設定ファイルに書くことになる。
+コマンドパレットとショートカットからの呼び出しには引数がない。任意のヘッダーはプラグインの設定で入力できる。
 
 **作業開始のタイムスタンプはエージェント自身のホストから来る。** `mainAgent.stateStartedAt` はエージェントが動いているマシンで記録されるので、時計がずれた SSH ホストは Discord のタイマーを狂わせうる。このマシンより 1 分以上進んでいる、または 1 日以上古いタイムスタンプは退けられ、ローカルで観測した時点が代わりに使われる。それより小さいずれの時計は、ずれた分だけ経過表示をずらす。
 
@@ -241,7 +206,7 @@ git clone https://github.com/LuticaCANARD/orca-discord-presence.git
 cd orca-discord-presence
 npm install
 npm run build      # tsc → dist/
-npm test           # build + node --test (99 tests)
+npm test           # build + node --test
 npm run typecheck  # no emit
 ```
 

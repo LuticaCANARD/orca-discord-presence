@@ -4,18 +4,18 @@
  * Orca ships no types package for plugin authors, so this file is a
  * hand-maintained transcription of the host's own contracts:
  *
- *   - `src/shared/plugins/plugin-host-api.ts`     — method params/results
- *   - `src/shared/plugins/plugin-events.ts`       — event payloads
- *   - `src/shared/plugins/plugin-capabilities.ts` — capability kinds
- *   - `src/shared/agent-status-types.ts`          — agent states
- *   - `src/main/plugins/plugin-host-runtime.ts`   — the `orca` object's shape
+ *   - `src/shared/plugins/workers/plugin-host-api.ts`     — method params/results
+ *   - `src/shared/plugins/events/plugin-events.ts`       — event payloads
+ *   - `src/shared/plugins/capabilities/plugin-capabilities.ts` — capability kinds
+ *   - `src/shared/agent-status/contracts/agent-status-types.ts`          — agent states
+ *   - `src/main/plugins/workers/child-runtime/plugin-host-runtime.ts`   — the `orca` object's shape
  *
  * The whole plugin API is marked EXPERIMENTAL upstream ("no compatibility
  * promises until pluginApi v1 freezes"), so treat a type error after an Orca
  * upgrade as a real signal rather than something to cast away.
  */
 /** `PLUGIN_CAPABILITY_KINDS`. */
-export type PluginCapabilityKind = 'workspace:read' | 'terminal:send' | 'notifications:show' | 'storage' | 'secrets' | 'events:subscribe' | 'settings:own';
+export type PluginCapabilityKind = 'workspace:read' | 'terminal:send' | 'notifications:show' | 'storage:own' | 'secrets:own' | 'agent:read' | 'settings:own';
 /** `AGENT_STATUS_STATES`. */
 export type AgentStatusState = 'working' | 'blocked' | 'waiting' | 'done';
 /**
@@ -43,17 +43,17 @@ export type MainAgentStatus = {
      */
     stateStartedAt: number;
 };
-export type WorktreeCreatedPayload = {
-    worktreeId: string;
+export type WorkspaceCreatedPayload = {
+    workspaceId: string;
     path: string;
     branch: string;
 };
-export type WorktreeRemovedPayload = {
-    worktreeId: string;
+export type WorkspaceRemovedPayload = {
+    workspaceId: string;
     path: string;
 };
 export type AgentStatusChangedPayload = {
-    worktreeId: string | null;
+    workspaceId: string | null;
     paneKey: string;
     /**
      * The *combined* status, which is what the pane shows the user: `working`
@@ -70,11 +70,14 @@ export type AgentStatusChangedPayload = {
      */
     mainAgent?: MainAgentStatus;
 };
-/** `PLUGIN_EVENT_NAMES` — a closed set in v0. */
+/** Host events subscribed to by this plugin. */
 export type PluginEventMap = {
-    'worktree.created': WorktreeCreatedPayload;
-    'worktree.removed': WorktreeRemovedPayload;
+    'workspace.created': WorkspaceCreatedPayload;
+    'workspace.removed': WorkspaceRemovedPayload;
     'agent.status.changed': AgentStatusChangedPayload;
+    'workspace.changed': {
+        context: WorkspaceContext;
+    };
 };
 export type PluginEventName = keyof PluginEventMap;
 /**
@@ -93,7 +96,7 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | {
     [key: string]: JsonValue;
 };
 /**
- * `PLUGIN_HOST_API_V0`. `params: void` marks the methods whose parameters the
+ * `params: void` marks the methods whose parameters the
  * host schema declares optional — the call signature below then forbids
  * passing one at all, which keeps a typo from silently becoming an argument.
  */
@@ -192,14 +195,6 @@ export type HostCallMap = {
             ok: true;
         };
     };
-    'events.subscribe': {
-        params: {
-            events: PluginEventName[];
-        };
-        result: {
-            subscribed: PluginEventName[];
-        };
-    };
 };
 export type HostMethod = keyof HostCallMap;
 export interface OrcaHostApi {
@@ -215,6 +210,13 @@ export interface OrcaEventsApi {
 export interface OrcaPluginApi {
     commands: OrcaCommandsApi;
     events: OrcaEventsApi;
+    settings: {
+        onDidChange(listener: (change: {
+            key: string;
+        }) => void): {
+            dispose(): void;
+        };
+    };
     host: OrcaHostApi;
     grantedCapabilities: readonly PluginCapabilityKind[];
     log(message: string): void;

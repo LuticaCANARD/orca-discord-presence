@@ -140,7 +140,7 @@ export declare function busyAnchor(state: PresenceState, fallback: number, now?:
 /**
  * Names of the workspaces (worktrees) that currently have a working agent.
  *
- * Only worktrees seen through `worktree.created` can be named — one that
+ * Only worktrees seen through `workspace.created` can be named — one that
  * existed before the plugin was installed is known by id alone, so the list
  * comes back short and `describeActivity` falls back to counting.
  */
@@ -166,7 +166,7 @@ export declare function describeActivity(summary: PresenceSummary, workspaces?: 
 /**
  * Project label from whatever the host gave us. `workspace.readContext` returns
  * a display name for the focused worktree; a worktree seen only through
- * `worktree.created` has just a path, whose basename is the best available name.
+ * `workspace.created` has just a path, whose basename is the best available name.
  */
 export declare function describeProject(focus: WorkspaceContext, state: PresenceState): string;
 export type HeaderContext = {
